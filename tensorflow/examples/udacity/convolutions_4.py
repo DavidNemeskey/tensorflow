@@ -16,9 +16,9 @@ def exercise_0(data, image_size=28, num_labels=10, num_channels=1):
 
     with graph.as_default():
         # Input data.
-        tf_train_dataset = tf.placeholder(
-            tf.float32, shape=(batch_size, image_size, image_size, num_channels))
-        tf_train_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels))
+        tf_dataset = tf.placeholder(
+            tf.float32, shape=(None, image_size, image_size, num_channels))
+        tf_labels = tf.placeholder(tf.float32, shape=(None, num_labels))
         tf_valid_dataset = tf.constant(data['validd'])
         tf_test_dataset = tf.constant(data['testd'])
 
@@ -43,23 +43,22 @@ def exercise_0(data, image_size=28, num_labels=10, num_channels=1):
             conv = tf.nn.conv2d(hidden, layer2_weights, [1, 2, 2, 1], padding='SAME')
             hidden = tf.nn.relu(conv + layer2_biases)
             shape = hidden.get_shape().as_list()
-            reshape = tf.reshape(hidden, [shape[0], shape[1] * shape[2] * shape[3]])
+            reshape = tf.reshape(hidden, [-1, shape[1] * shape[2] * shape[3]])
             hidden = tf.nn.relu(tf.matmul(reshape, layer3_weights) + layer3_biases)
             return tf.matmul(hidden, layer4_weights) + layer4_biases
 
         # Training computation.
-        logits = model(tf_train_dataset)
+        logits = model(tf_dataset)
         loss = tf.reduce_mean(
-            tf.nn.softmax_cross_entropy_with_logits(logits, tf_train_labels))
+            tf.nn.softmax_cross_entropy_with_logits(logits, tf_labels))
 
         # Optimizer.
         optimizer = tf.train.GradientDescentOptimizer(0.05).minimize(loss)
 
         # Predictions for the training, validation, and test data.
-        train_prediction = tf.nn.softmax(logits)
-        valid_prediction = tf.nn.softmax(model(tf_valid_dataset))
-        test_prediction = tf.nn.softmax(model(tf_test_dataset))
+        prediction = tf.nn.softmax(logits)
 
+        ## The next "cell" -- running the session  # noqa
         num_steps = 1001
 
         with tf.Session(graph=graph) as session:
@@ -69,17 +68,21 @@ def exercise_0(data, image_size=28, num_labels=10, num_channels=1):
                 offset = (step * batch_size) % (data['trainl'].shape[0] - batch_size)
                 batch_data = data['traind'][offset:(offset + batch_size), :, :, :]
                 batch_labels = data['trainl'][offset:(offset + batch_size), :]
-                feed_dict = {tf_train_dataset: batch_data, tf_train_labels: batch_labels}
+                feed_dict = {tf_dataset: batch_data, tf_labels: batch_labels}
                 _, l, predictions = session.run(
-                    [optimizer, loss, train_prediction], feed_dict=feed_dict)
+                    [optimizer, loss, prediction], feed_dict=feed_dict)
                 if (step % 50 == 0):
                     print('Minibatch loss at step %d: %f' % (step, l))
                     print('Minibatch accuracy: %.1f%%' % accuracy(
                         predictions, batch_labels))
+                    valid_predictions = session.run(
+                        prediction, feed_dict={tf_dataset: tf_valid_dataset.eval()})
                     print('Validation accuracy: %.1f%%' % accuracy(
-                        valid_prediction.eval(), data['validl']))
+                        valid_predictions, data['validl']))
+            test_predictions = session.run(
+                prediction, feed_dict={tf_dataset: tf_test_dataset.eval()})
             print('Test accuracy: %.1f%%' % accuracy(
-                test_prediction.eval(), data['testl']))
+                test_predictions, data['testl']))
 
 
 def reformat(raw_data, data, prefix):
