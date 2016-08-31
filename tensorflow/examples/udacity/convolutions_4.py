@@ -44,7 +44,7 @@ def create_graph_01(graph, params, pooling):
                                           strides=[1, 2, 2, 1], padding='SAME')
                 else:
                     return x
-            strides = [1, 2, 2, 1] if pooling else [1, 1, 1, 1]
+            strides = [1, 1, 1, 1] if pooling else [1, 2, 2, 1]
 
             # Building the net
             conv = tf.nn.conv2d(data, layer1_weights, strides, padding='SAME')
@@ -172,7 +172,7 @@ def main():
     params = namedtuple(
         'Params', ['image_size', 'num_channels', 'num_labels',
                    'batch_size', 'patch_size', 'depth', 'num_hidden']
-    )(image_size, num_channels, data['train_labels'].shape[1],
+    )(image_size, num_channels, data['trainl'].shape[1],
       batch_size, patch_size, depth, hidden)
 
     graph = tf.Graph()
