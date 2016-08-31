@@ -2,13 +2,14 @@
 # vim: set fileencoding=utf-8 :
 
 """Exercises for assignment 4 -- convolutions."""
+from argparse import ArgumentParser
 from collections import namedtuple
 import tensorflow as tf
 
 from common import accuracy, load_data, reformat_conv
 
 
-def create_graph_0(graph, params):
+def create_graph_01(graph, params, pooling):
     with graph.as_default():
         # Input data.
         tf_dataset = tf.placeholder(
@@ -36,10 +37,20 @@ def create_graph_0(graph, params):
 
         # Model.
         def model(data):
-            conv = tf.nn.conv2d(data, layer1_weights, [1, 2, 2, 1], padding='SAME')
-            hidden = tf.nn.relu(conv + layer1_biases)
-            conv = tf.nn.conv2d(hidden, layer2_weights, [1, 2, 2, 1], padding='SAME')
-            hidden = tf.nn.relu(conv + layer2_biases)
+            # Pooling
+            def max_pool_2x2(x):
+                if pooling:
+                    return tf.nn.max_pool(x, ksize=[1, 2, 2, 1],
+                                          strides=[1, 2, 2, 1], padding='SAME')
+                else:
+                    return x
+            strides = [1, 2, 2, 1] if pooling else [1, 1, 1, 1]
+
+            # Building the net
+            conv = tf.nn.conv2d(data, layer1_weights, strides, padding='SAME')
+            hidden = max_pool_2x2(tf.nn.relu(conv + layer1_biases))
+            conv = tf.nn.conv2d(hidden, layer2_weights, strides, padding='SAME')
+            hidden = max_pool_2x2(tf.nn.relu(conv + layer2_biases))
             shape = hidden.get_shape().as_list()
             reshape = tf.reshape(hidden, [-1, shape[1] * shape[2] * shape[3]])
             hidden = tf.nn.relu(tf.matmul(reshape, layer3_weights) + layer3_biases)
@@ -53,6 +64,28 @@ def create_graph_0(graph, params):
 
         # Predictions for the training, validation, and test data.
         prediction = tf.nn.softmax(logits, name='prediction')  # noqa
+
+
+def create_graph_0(graph, params):
+    create_graph_01(graph, params, False)
+
+
+def create_graph_1(graph, params):
+    """
+    The convolutional model above uses convolutions with stride 2 to reduce the
+    dimensionality. Replace the strides by a max pooling operation
+    (nn.max_pool()) of stride 2 and kernel size 2.
+    """
+    create_graph_01(graph, params, True)
+
+
+def create_graph_2(graph, params):
+    """
+    Try to get the best performance you can using a convolutional net. Look for
+    example at the classic LeNet5 architecture, adding Dropout, and/or adding
+    learning rate decay.
+    """
+    pass
 
 
 def train_graph(graph, data, params):
@@ -104,17 +137,46 @@ def reformat(raw_data, data, prefix):
     data['{}l'.format(prefix)] = l
 
 
+def parse_arguments():
+    parser = ArgumentParser(
+        description='Exercises for assignment 4 -- convolutions.')
+    parser.add_argument('--exercise', '-e', type=int, required=True,
+                        help='the exercise to run.')
+    parser.add_argument('--iterations', '-i', type=int, default=1001,
+                        help='the number of iterations [1001].')
+    parser.add_argument('--batch-size', '-b', type=int, default=16,
+                        help='the training batch size [16].')
+    parser.add_argument('--patch-size', '-p', type=int, default=5,
+                        help='the patch size for the convolution [5].')
+    parser.add_argument('--depth', '-d', type=int, default=16,
+                        help='the depth of the convolution [16].')
+    parser.add_argument('--hidden', '-H', type=int, default=64,
+                        help='the size of the hidden layer[64].')
+    parser.add_argument('--image-size', type=int, default=28,
+                        help='the image size [28].')
+    parser.add_argument('--num-channels', type=int, default=1,
+                        help='the number of image channels [1].')
+    args = parser.parse_args()
+
+    return (args.exercise, args.iterations, args.batch_size, args.patch_size,
+            args.depth, args.hidden, args.image_size, args.num_channels)
+
+
 def main():
+    (exercise, iterations, batch_size, patch_size,
+     depth, hidden, image_size, num_channels) = parse_arguments()
+
     raw_data, data = load_data(), {}
     for prefix in ['train', 'valid', 'test']:
         reformat(raw_data, data, prefix)
     params = namedtuple(
         'Params', ['image_size', 'num_channels', 'num_labels',
                    'batch_size', 'patch_size', 'depth', 'num_hidden']
-    )(28, 1, 10, 16, 5, 16, 64)
+    )(image_size, num_channels, data['train_labels'].shape[1],
+      batch_size, patch_size, depth, hidden)
 
     graph = tf.Graph()
-    create_graph_0(graph, params)
+    globals()['create_graph_{}'.format(exercise)](graph, params)
     session = train_graph(graph, data, params)
     test_model(session, data)
 
