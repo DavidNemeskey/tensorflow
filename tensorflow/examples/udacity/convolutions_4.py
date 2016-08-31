@@ -6,7 +6,8 @@ from argparse import ArgumentParser
 from collections import namedtuple
 import tensorflow as tf
 
-from common import accuracy, load_data, reformat_conv
+from common import accuracy, reformat_conv
+from not_mnist import load_data
 
 
 def create_graph_01(graph, params, pooling):
