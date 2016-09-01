@@ -2,6 +2,7 @@
 # vim: set fileencoding=utf-8 :
 
 """Exercises for assignment 4 -- convolutions."""
+from __future__ import print_function
 from argparse import ArgumentParser
 from collections import namedtuple
 import os
