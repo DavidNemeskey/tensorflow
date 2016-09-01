@@ -88,7 +88,69 @@ def create_graph_2(graph, params):
     example at the classic LeNet5 architecture, adding Dropout, and/or adding
     learning rate decay.
     """
-    pass
+    with graph.as_default():
+        # Input data.
+        tf_dataset = tf.placeholder(
+            tf.float32, shape=(None, params.image_size, params.image_size, params.num_channels),
+            name='tf_dataset')
+        tf_labels = tf.placeholder(
+            tf.float32, shape=(None, params.num_labels), name='tf_labels')
+        keep_prob = tf.placeholder(tf.float32, name='keep_prob')
+
+        # Variables.
+        layer1_weights = tf.Variable(tf.truncated_normal(
+            [params.patch_size, params.patch_size,
+             params.num_channels, params.depth // 2], stddev=0.1))
+        layer1_biases = tf.Variable(tf.zeros([params.depth // 2]))
+        layer3_weights = tf.Variable(tf.truncated_normal(
+            [params.patch_size, params.patch_size, params.depth // 2, params.depth],
+            stddev=0.1))
+        layer3_biases = tf.Variable(tf.constant(1.0, shape=[params.depth]))
+        layer5_weights = tf.Variable(tf.truncated_normal(
+            [params.image_size // 4, params.image_size // 4,
+             params.depth, 120], stddev=0.1))
+        layer5_biases = tf.Variable(tf.zeros([120]))
+        layer6_weights = tf.Variable(tf.truncated_normal(
+            [120, params.num_hidden], stddev=0.1))
+        layer6_biases = tf.Variable(tf.constant(1.0, shape=[params.num_hidden]))
+        layer7_weights = tf.Variable(tf.truncated_normal(
+            [params.num_hidden, params.num_labels], stddev=0.1))
+        layer7_biases = tf.Variable(tf.constant(1.0, shape=[params.num_labels]))
+        tanh_A = tf.Variable(tf.constant(1.7159))
+        tanh_S = tf.Variable(tf.constant(2 / 3.0))
+
+        # Model.
+        def model(data):
+            # Pooling
+            def avg_pool_2x2(x):
+                return tf.nn.max_pool(x, ksize=[1, 2, 2, 1],
+                                      strides=[1, 2, 2, 1], padding='SAME')
+
+            def atanh(x):
+                return tf.mul(tf.tanh(tf.mul(x, tanh_S)), tanh_A)
+
+            # Building the net
+            c1 = tf.nn.conv2d(data, layer1_weights, [1, 1, 1, 1], padding='SAME')
+            # TODO: "sum with learnable weight"
+            s2 = avg_pool_2x2(atanh(c1 + layer1_biases))
+            # TODO: Partial kernel
+            c3 = tf.nn.conv2d(s2, layer3_weights, [1, 1, 1, 1], padding='SAME')
+            s4 = avg_pool_2x2(atanh(c3 + layer3_biases))
+            c5 = tf.nn.conv2d(s4, layer5_weights, [1, 1, 1, 1], padding='VALID') + layer5_biases
+            shape = c5.get_shape().as_list()
+            reshape = tf.reshape(c5, [-1, shape[1] * shape[2] * shape[3]])
+            f6 = atanh(tf.matmul(reshape, layer6_weights) + layer6_biases)
+            f6_dropped = tf.nn.dropout(f6, keep_prob)
+            return tf.matmul(f6_dropped, layer7_weights) + layer7_biases
+
+        # Training computation.
+        logits = model(tf_dataset)
+        loss = tf.reduce_mean(  # noqa
+            tf.nn.softmax_cross_entropy_with_logits(logits, tf_labels),
+            name='loss')
+
+        # Predictions for the training, validation, and test data.
+        prediction = tf.nn.softmax(logits, name='prediction')  # noqa
 
 
 def train_graph(graph, data, params, num_steps=1001):
@@ -96,7 +158,7 @@ def train_graph(graph, data, params, num_steps=1001):
     prediction = graph.get_tensor_by_name('prediction:0')
     with graph.as_default():
         # Optimizer.
-        optimizer = tf.train.GradientDescentOptimizer(0.05).minimize(loss)
+        optimizer = tf.train.AdamOptimizer(1e-4).minimize(loss)
         init = tf.initialize_all_variables()
 
     session = tf.Session(graph=graph)
@@ -109,15 +171,17 @@ def train_graph(graph, data, params, num_steps=1001):
                       (data['trainl'].shape[0] - params.batch_size))
             batch_data = data['traind'][offset:(offset + params.batch_size), :, :, :]
             batch_labels = data['trainl'][offset:(offset + params.batch_size), :]
-            feed_dict = {'tf_dataset:0': batch_data, 'tf_labels:0': batch_labels}
+            feed_dict = {'tf_dataset:0': batch_data, 'tf_labels:0': batch_labels,
+                         'keep_prob:0': 0.5}
             _, l, predictions = session.run(
                 [optimizer, loss, prediction], feed_dict=feed_dict)
-            if (step % 50 == 0):
+            if (step % 100 == 0):
                 print('Minibatch loss at step %d: %f' % (step, l))
                 print('Minibatch accuracy: %.1f%%' % accuracy(
                     predictions, batch_labels))
                 valid_predictions = session.run(
-                    prediction, feed_dict={'tf_dataset:0': data['validd']})
+                    prediction, feed_dict={'tf_dataset:0': data['validd'],
+                                           'keep_prob:0': 1.0})
                 print('Validation accuracy: %.1f%%' % accuracy(
                     valid_predictions, data['validl']))
         return session
@@ -126,7 +190,8 @@ def train_graph(graph, data, params, num_steps=1001):
 def test_model(session, data):
     prediction = session.graph.get_tensor_by_name('prediction:0')
     test_predictions = session.run(
-        prediction, feed_dict={'tf_dataset:0': data['testd']})
+        prediction, feed_dict={'tf_dataset:0': data['testd'],
+                               'keep_prob:0': 1.0})
     print('Test accuracy: %.1f%%' % accuracy(
         test_predictions, data['testl']))
 
