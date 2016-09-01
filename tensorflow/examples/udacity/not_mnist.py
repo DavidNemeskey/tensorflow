@@ -22,16 +22,20 @@ def parse_arguments():
         description='Exercises for assignment 4 -- convolutions.')
     parser.add_argument('--data-dir', '-d', required=True,
                         help='directory to save the data to.')
-    parser.add_argument('--train-size', type=int, default=200000,
-                        help='the size of the training set [200k].')
+    parser.add_argument('--train-size', type=int, default=-1,
+                        help='the size of the training set [-1]. A negative '
+                             'number indicates that all data is needed.')
     parser.add_argument('--valid-size', type=int, default=20000,
-                        help='the size of the validation set [200k].')
-    parser.add_argument('--test-size', type=int, default=15000,
-                        help='the size of the test set [200k].')
+                        help='the size of the validation set [20(k)].')
+    parser.add_argument('--test-size', type=int, default=-1,
+                        help='the size of the test set [-1]. A negative '
+                             'number indicates that all data is needed.')
     parser.add_argument('--filter-duplicates', '-f', action='store_true',
                         help='whether to filter duplicates or not.')
     args = parser.parse_args()
 
+    if args.valid_size <= 0:
+        parser.error('--valid-size must be greater than 0.')
     return (args.data_dir, args.train_size, args.valid_size, args.test_size,
             args.filter_duplicates)
 
@@ -155,35 +159,40 @@ def make_arrays(nb_rows, img_size):
 
 def merge_datasets(image_size, pickle_files, train_size, valid_size=0):
     num_classes = len(pickle_files)
-    valid_dataset, valid_labels = make_arrays(valid_size, image_size)
-    train_dataset, train_labels = make_arrays(train_size, image_size)
+    valids, trains = [], []
+    # TODO lossless
     vsize_per_class = valid_size // num_classes
     tsize_per_class = train_size // num_classes
 
-    start_v, start_t = 0, 0
-    end_v, end_t = vsize_per_class, tsize_per_class
-    end_l = vsize_per_class+tsize_per_class
     for label, pickle_file in enumerate(pickle_files):
         try:
             with open(pickle_file, 'rb') as f:
                 letter_set = pickle.load(f)
                 # let's shuffle the letters to have random validation and training set
                 np.random.shuffle(letter_set)
-                if valid_dataset is not None:
-                    valid_letter = letter_set[:vsize_per_class, :, :]
-                    valid_dataset[start_v:end_v, :, :] = valid_letter
-                    valid_labels[start_v:end_v] = label
-                    start_v += vsize_per_class
-                    end_v += vsize_per_class
-
-                train_letter = letter_set[vsize_per_class:end_l, :, :]
-                train_dataset[start_t:end_t, :, :] = train_letter
-                train_labels[start_t:end_t] = label
-                start_t += tsize_per_class
-                end_t += tsize_per_class
+                if valid_size != 0:
+                    valid_dataset, valid_labels = make_arrays(
+                        vsize_per_class, image_size)
+                    valid_dataset[:, :, :] = letter_set[:vsize_per_class, :, :]
+                    valid_labels[:] = label
+                    valids.append((valid_dataset, valid_labels))
+                train_letter = letter_set[vsize_per_class:, :, :]
+                if train_size < 0:
+                    tsize_per_class = train_letter.shape[0]
+                train_dataset, train_labels = make_arrays(
+                    tsize_per_class, image_size)
+                train_dataset[:, :, :] = train_letter[:tsize_per_class, :, :]
+                train_labels[:] = label
+                trains.append((train_dataset, train_labels))
         except Exception as e:
             print('Unable to process data from', pickle_file, ':', e)
             raise
+
+    train_dataset, train_labels = map(np.concatenate, zip(*trains))
+    if valid_size != 0:
+        valid_dataset, valid_labels = map(np.concatenate, zip(*valids))
+    else:
+        valid_dataset, valid_labels = None, None
 
     return valid_dataset, valid_labels, train_dataset, train_labels
 
