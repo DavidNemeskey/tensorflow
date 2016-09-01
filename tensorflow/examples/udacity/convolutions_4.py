@@ -4,6 +4,8 @@
 """Exercises for assignment 4 -- convolutions."""
 from argparse import ArgumentParser
 from collections import namedtuple
+import os
+
 import tensorflow as tf
 
 from common import accuracy, reformat_conv
@@ -89,15 +91,13 @@ def create_graph_2(graph, params):
     pass
 
 
-def train_graph(graph, data, params):
+def train_graph(graph, data, params, num_steps=1001):
     loss = graph.get_tensor_by_name('loss:0')
     prediction = graph.get_tensor_by_name('prediction:0')
     with graph.as_default():
         # Optimizer.
         optimizer = tf.train.GradientDescentOptimizer(0.05).minimize(loss)
         init = tf.initialize_all_variables()
-
-    num_steps = 1001
 
     session = tf.Session(graph=graph)
     with session.as_default():
@@ -143,6 +143,8 @@ def parse_arguments():
         description='Exercises for assignment 4 -- convolutions.')
     parser.add_argument('--exercise', '-e', type=int, required=True,
                         help='the exercise to run.')
+    parser.add_argument('--data-file', '-f', required=True,
+                        help='the pickled data file.')
     parser.add_argument('--iterations', '-i', type=int, default=1001,
                         help='the number of iterations [1001].')
     parser.add_argument('--batch-size', '-b', type=int, default=16,
@@ -159,15 +161,17 @@ def parse_arguments():
                         help='the number of image channels [1].')
     args = parser.parse_args()
 
-    return (args.exercise, args.iterations, args.batch_size, args.patch_size,
-            args.depth, args.hidden, args.image_size, args.num_channels)
+    return (args.exercise, args.data_file, args.iterations, args.batch_size,
+            args.patch_size, args.depth, args.hidden, args.image_size,
+            args.num_channels)
 
 
 def main():
-    (exercise, iterations, batch_size, patch_size,
-     depth, hidden, image_size, num_channels) = parse_arguments()
+    (exercise, data_file, iterations, batch_size,
+     patch_size, depth, hidden, image_size, num_channels) = parse_arguments()
 
-    raw_data, data = load_data(), {}
+    raw_data, data = load_data(
+        os.path.dirname(data_file), os.path.basename(data_file)), {}
     for prefix in ['train', 'valid', 'test']:
         reformat(raw_data, data, prefix)
     params = namedtuple(
@@ -178,7 +182,7 @@ def main():
 
     graph = tf.Graph()
     globals()['create_graph_{}'.format(exercise)](graph, params)
-    session = train_graph(graph, data, params)
+    session = train_graph(graph, data, params, iterations)
     test_model(session, data)
 
 
