@@ -153,7 +153,7 @@ def make_arrays(nb_rows, img_size):
     return dataset, labels
 
 
-def merge_datasets(pickle_files, train_size, image_size, valid_size=0):
+def merge_datasets(image_size, pickle_files, train_size, valid_size=0):
     num_classes = len(pickle_files)
     valid_dataset, valid_labels = make_arrays(valid_size, image_size)
     train_dataset, train_labels = make_arrays(train_size, image_size)
@@ -220,6 +220,8 @@ def main():
     (data_dir, train_size, valid_size,
      test_size, filter_duplicates) = parse_arguments()
 
+    image_size = 28
+
     # Download data
     url = 'http://commondatastorage.googleapis.com/books1000/'
     train_filename = maybe_download(url, data_dir, 'notMNIST_large.tar.gz', 247336696)
@@ -237,8 +239,9 @@ def main():
 
     # Merge and prune the datasets
     valid_dataset, valid_labels, train_dataset, train_labels = merge_datasets(
-        train_datasets, train_size, valid_size)
-    _, _, test_dataset, test_labels = merge_datasets(test_datasets, test_size)
+        image_size, train_datasets, train_size, valid_size)
+    _, _, test_dataset, test_labels = merge_datasets(
+        image_size, test_datasets, test_size)
 
     print('Training:', train_dataset.shape, train_labels.shape)
     print('Validation:', valid_dataset.shape, valid_labels.shape)
