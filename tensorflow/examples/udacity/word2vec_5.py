@@ -5,6 +5,7 @@
 from __future__ import print_function
 from argparse import ArgumentParser
 import collections
+import gzip
 import math
 import random
 
@@ -42,11 +43,14 @@ def parse_arguments():
                         help='the default number of iterations [100001].')
     parser.add_argument('--display-results', '-d', action='store_true',
                         help='whether to display the result in a plot')
+    parser.add_argument('--output', '-o',
+                        help='the output file (prefix, [sg,cg].txt will be '
+                             'appended to it.')
     args = parser.parse_args()
 
     return (args.exercise, args.data_file, args.vocab_size, args.neg_samples,
             args.batch_size, args.embed_size, args.skip_window, args.num_skips,
-            args.valid_size, args.valid_window, args.iterations)
+            args.valid_size, args.valid_window, args.iterations, args.output)
 
 
 def build_dataset(words, vocab_size):
@@ -199,7 +203,7 @@ def create_sg_graph(graph, params, data, reverse_dictionary):
 def main():
     (exercise, data_file, vocab_size, neg_samples,
      batch_size, embed_size, skip_window, num_skips,
-     valid_size, valid_window, iterations) = parse_arguments()
+     valid_size, valid_window, iterations, output) = parse_arguments()
 
     # For valid evaluation
     valid_examples = np.array(random.sample(range(valid_window), valid_size))
@@ -228,7 +232,12 @@ def main():
     valid_examples = np.array(random.sample(range(valid_window), valid_size))
 
     graph = tf.Graph()
-    create_sg_graph(graph, params, data, reverse_dictionary)
+    final_embeddings = create_sg_graph(graph, params, data, reverse_dictionary)
+    if output:
+        with gzip.open('{}.{}.txt.gz'.format(output, exercise), 'wt', 5) as outf:
+            for i, emb in enumerate(final_embeddings):
+                print('{} {}'.format(reverse_dictionary[i],
+                                     ' '.join(str(e) for e in emb)), file=outf)
 
 
 if __name__ == '__main__':
