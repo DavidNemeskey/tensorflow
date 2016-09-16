@@ -245,14 +245,13 @@ def problem_0(batch_size, num_unrollings, num_nodes, iterations,
             sample_prediction = tf.nn.softmax(tf.nn.xw_plus_b(sample_output, w, b))
 
     # Training
-    num_steps = 7001
     summary_frequency = 100
 
     with tf.Session(graph=graph) as session:
         tf.initialize_all_variables().run()
         print('Initialized')
         mean_loss = 0
-        for step in range(num_steps):
+        for step in range(iterations):
             batches = train_batches.next()
             feed_dict = dict()
             for i in range(num_unrollings + 1):
@@ -307,7 +306,7 @@ def problem_1(batch_size, num_unrollings, num_nodes, iterations,
     with graph.as_default():
         INPUT, FORGET, OUTPUT = range(3)
         # Parameters:
-        # Common parameters for all gates
+        # Common parameters for all gates + state update
         Gx = tf.Variable(tf.truncated_normal([VC.vocabulary_size, 4 * num_nodes], -0.1, 0.1))
         Gm = tf.Variable(tf.truncated_normal([num_nodes, 4 * num_nodes], -0.1, 0.1))
         Gb = tf.Variable(tf.zeros([1, 4 * num_nodes]))
@@ -386,14 +385,13 @@ def problem_1(batch_size, num_unrollings, num_nodes, iterations,
             sample_prediction = tf.nn.softmax(tf.nn.xw_plus_b(sample_output, w, b))
 
     # Training
-    num_steps = 7001
     summary_frequency = 100
 
     with tf.Session(graph=graph) as session:
         tf.initialize_all_variables().run()
         print('Initialized')
         mean_loss = 0
-        for step in range(num_steps):
+        for step in range(iterations):
             batches = train_batches.next()
             feed_dict = dict()
             for i in range(num_unrollings + 1):
