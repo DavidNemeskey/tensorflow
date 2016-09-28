@@ -5,28 +5,51 @@
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
 import gzip.open as gopen
+import os
 
 import numpy as np
+import tensorflow as tf
+
+from attr_dict import AttrDict
 
 
 def parse_arguments():
     parser = ArgumentParser(
         description='Sequence classification with LSTM.')
-    parser.add_argument('sentiment_data', help='the sentiment tsv file.')
+    parser.add_argument('sentiment_prefix',
+                        help='the sentiment tsv file prefix: the part before '
+                             'train/valid/test.')
     parser.add_argument('embedding_file', help='the embedding file in text format.')
     parser.add_argument('--vocab', '-v', help='the sentiment vocabulary. '
                                               'Optional, but reduces memory usage.')
-    parser.add_argument('--valid-size', type=int, default=1000,
-                        help='random set of words to evaluate similarity on [1000].')
     parser.add_argument('--batch-size', '-b', type=int, default=64,
                         help='the training batch size [64].')
     parser.add_argument('--num-unrollings', '-u', type=int, default=10,
-                        help='unroll the LSTM for how many steps [10].')
+                        help='unroll the RNN for how many steps [10].')
     parser.add_argument('--num-nodes', '-n', type=int, default=64,
-                        help='use how many LSTM cells [64].')
-    parser.add_argument('--iterations', type=int, default=100001,
-                        help='the default number of iterations [130001].')
+                        help='use how many RNN cells [64].')
+    parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
+                        default='lstm', help='the RNN cell to use [lstm].')
+    parser.add_argument('--iterations', type=int, default=10001,
+                        help='the default number of iterations [10001].')
+    parser.add_argument('--learning-rate', '-l', type=float, default=0.02,
+                        help='the default learning rate [0.02].')
+    parser.add_argument('--gradient-clipping', '-g', action='store_true',
+                        help='if gradient clipping should be used.')
+    parser.add_argument('--print-every', type=int, default=1000,
+                        help='print validation set accuracy every this steps'
+                             ' [1000].')
+    parser.add_argument('--save-every', type=int, default=2000,
+                        help='save the model every this steps [2000].')
     args = parser.parse_args()
+
+    if args.rnn_cell == 'gru':
+        args.rnn_cell = tf.nn.rnn_cell.GRUCell
+    elif args.rnn_cell == 'lstm':
+        args.rnn_cell = tf.nn.rnn_cell.BasicLSTMCell
+    else:
+        args.rnn_cell = tf.nn.rnn_cell.BasicRnnCell
+    return args
 
 
 class Embedding(object):
@@ -37,15 +60,15 @@ class Embedding(object):
                 word, vector = line.strip().split(' ', 1)
                 if filter_vocab is None or word in filter_vocab:
                     if ' ' in vector:  # header
-                        words.append(word)
+                        self.words.append(word)
                         vectors.append(vector.split(' '))
 
             self.vectors = np.array([list(map(float, l)) for l in vectors],
                                     dtype=np.float32)
-            self.indices = {words: i for i, word in self.words}
+            self.indices = {word: i for i, word in self.words}
 
     def __call__(self, sequence):
-        #data = np.zeros((len(sequence), self.vectors.shape[1]), dtype=np.float32)
+        # data = np.zeros((len(sequence), self.vectors.shape[1]), dtype=np.float32)
         indices = [self.indices.get(w, 0) for w in sequence]
         return self.vectors[indices]
 
@@ -54,11 +77,25 @@ class Embedding(object):
 
 
 class SequenceClassificationModel(object):
-    def __init__(self, params):
+    def __init__(self, params, name='LSTM SC'):
+        self.name = name
+        self.save_dir = os.path.join('saves', self.name)
         self.params = params
-        self.length = self._length()
-        self.data = tf.placeholder(tf.float32, [None, params.length, params.dim])
+        self.graph = tf.Graph()
+
+        with self.graph.as_default():
+            with tf.name_scope('model'):
+                self._create_graph()
+            with tf.name_scope('global_ops'):
+                self.init = tf.initialize_all_variables(name='init')
+                self.saver = tf.train.Saver(name='saver')
+
+    def _create_graph(self):
+        """This creates the graph."""
+        self.data = tf.placeholder(
+            tf.float32, [None, self.params.num_unrollings, self.params.dim])
         self.target = tf.placeholder(tf.float32, [None, 2])
+        self.length = self._length()
         self.prediction = self._prediction()
         self.optimize = self._optimize()
         self.accuracy = self._accuracy()
@@ -140,9 +177,69 @@ class SequenceClassificationModel(object):
                             tf.argmax(self.prediction, 1))
         return tf.reduce_mean(tf.cast(mistakes, tf.float32))
 
+    def run_training(self, train_data, train_labels,
+                     valid_data, valid_labels):
+        sess = tf.Session(graph=self.graph)
+        valid_feed = {self.data: valid_data, self.labels: valid_labels}
+
+        # Load the latest training checkpoint, if it exists
+        ckpt = tf.train.get_checkpoint_state(self.save_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            # Restores from checkpoint
+            self.saver.restore(sess, ckpt.model_checkpoint_path)
+            initial_step = int(ckpt.model_checkpoint_path.rsplit('-', 1)[1])
+        else:
+            sess.run(self.init)
+            initial_step = 0
+
+        # The actual training loop
+        for step, batch in enumerate(batches):
+            feed = {self.data: batch[0], self.target: batch[1]}
+            sess.run(self.optimize, feed=feed)
+            if step % self.params.print_every == 0:
+                accuracy = sess.run(self.accuracy, feed=valid_feed)
+                print('{}: {:3.1f}%'.format(step + 1, 100 * accuracy))
+ 
+            # Model checkpoint
+            if step % self.params.save_every == 0 and step > 0:
+                self.saver.save(sess, self.save_dir, global_step=step + initial_step)
+
+        # Aaand we are done
+        self.saver.save(sess, self.save_dir, global_step=step + initial_step)
+        accuracy = sess.run(self.accuracy, feed=valid_feed)
+        print('Final accuracy: {:3.1f}%'.format(100 * accuracy))
+        sess.close()
+
+    def run_test(self, test_data, test_labels):
+        sess = tf.Session(graph=self.graph)
+
+        # Load the latest training checkpoint, if it exists
+        ckpt = tf.train.get_checkpoint_state(self.save_dir)
+        if ckpt and ckpt.model_checkpoint_path:
+            # Restores from checkpoint
+            self.saver.restore(sess, ckpt.model_checkpoint_path)
+        else:
+            raise RuntimeError('No trained models available')
+
+        accuracy = sess.run(self.accuracy,
+                            {self.data: test_data, self.labels: test_labels})
+        print('Test accuracy: {:3.1f}%'.format(100 * accuracy))
+        sess.close()
+
 
 def main():
-    pass
+    args = parse_arguments()
+    params = AttrDict(
+        rnn_cell=args.rnn_cell,
+        rnn_hidden=args.num_nodes,
+        num_unrollings=args.num_unrollings,
+        learning_rate=args.learning_rate,
+        gradient_clipping=args.gradient_clipping,
+        iterations=args.iterations,
+        print_every=args.print_every,
+        save_every=args.save_every
+    )
+    model = SequenceClassificationModel(params, 'hello')
 
 
 if __name__ == '__main__':
