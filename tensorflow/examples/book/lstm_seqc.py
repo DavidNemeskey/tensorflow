@@ -22,6 +22,8 @@ def parse_arguments():
     parser.add_argument('embedding_file', help='the embedding file in text format.')
     parser.add_argument('--vocab', '-v', help='the sentiment vocabulary. '
                                               'Optional, but reduces memory usage.')
+    parser.add_argument('--model-name', '-m', default='RNN SC',
+                        help='the name of the model [RNN SC].')
     parser.add_argument('--batch-size', '-b', type=int, default=64,
                         help='the training batch size [64].')
     parser.add_argument('--num-unrollings', '-u', type=int, default=10,
@@ -77,8 +79,8 @@ class Embedding(object):
 
 
 class SequenceClassificationModel(object):
-    def __init__(self, params, name='LSTM SC'):
-        self.name = name
+    def __init__(self, params):
+        self.name = params.name
         self.save_dir = os.path.join('saves', self.name)
         self.params = params
         self.graph = tf.Graph()
@@ -230,6 +232,7 @@ class SequenceClassificationModel(object):
 def main():
     args = parse_arguments()
     params = AttrDict(
+        name=args.model_name,
         rnn_cell=args.rnn_cell,
         rnn_hidden=args.num_nodes,
         num_unrollings=args.num_unrollings,
@@ -239,7 +242,7 @@ def main():
         print_every=args.print_every,
         save_every=args.save_every
     )
-    model = SequenceClassificationModel(params, 'hello')
+    model = SequenceClassificationModel(params)
 
 
 if __name__ == '__main__':
