@@ -31,7 +31,7 @@ def parse_arguments():
                         help='use how many RNN cells [64].')
     parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
                         default='lstm', help='the RNN cell to use [lstm].')
-    parser.add_argument('--iterations', type=int, default=10001,
+    parser.add_argument('--iterations', '-i', type=int, default=10001,
                         help='the default number of iterations [10001].')
     parser.add_argument('--learning-rate', '-l', type=float, default=0.02,
                         help='the default learning rate [0.02].')
