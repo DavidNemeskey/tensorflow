@@ -57,6 +57,7 @@ class Embedding(object):
     def __init__(self, embedding_file, filter_vocab=None):
         if filter_vocab is None:
             filter_vocab = set()
+        filter_vocab.add('<unk>')
         with openall(embedding_file) as inf:
             self.words, vectors = [], []
             for line in inf:
@@ -68,7 +69,7 @@ class Embedding(object):
 
             self.vectors = np.array([list(map(float, l)) for l in vectors],
                                     dtype=np.float32)
-            self.indices = {word: i for i, word in self.words}
+            self.indices = {word: i for i, word in enumerate(self.words)}
             if self.words[0] != '<unk>':
                 raise ValueError('The first word in the embedding is not <unk>!')
 
