@@ -4,13 +4,12 @@
 """Sequence classification with LSTM."""
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
-import gzip.open as gopen
 import os
 
 import numpy as np
 import tensorflow as tf
 
-from attr_dict import AttrDict
+from auxiliary import AttrDict, openall
 
 
 def parse_arguments():
@@ -26,8 +25,8 @@ def parse_arguments():
                         help='the name of the model [RNN SC].')
     parser.add_argument('--batch-size', '-b', type=int, default=64,
                         help='the training batch size [64].')
-    parser.add_argument('--num-unrollings', '-u', type=int, default=10,
-                        help='unroll the RNN for how many steps [10].')
+    # parser.add_argument('--num-unrollings', '-u', type=int, default=10,
+    #                     help='unroll the RNN for how many steps [10].')
     parser.add_argument('--num-nodes', '-n', type=int, default=64,
                         help='use how many RNN cells [64].')
     parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
@@ -55,24 +54,34 @@ def parse_arguments():
 
 
 class Embedding(object):
-    def __init__(self, embedding_file, filter_vocab):
-        with (gopen if embedding_file.endswith('.gz') else open)(embedding_file) as inf:
+    def __init__(self, embedding_file, filter_vocab=None):
+        if filter_vocab is None:
+            filter_vocab = set()
+        with openall(embedding_file) as inf:
             self.words, vectors = [], []
             for line in inf:
                 word, vector = line.strip().split(' ', 1)
                 if filter_vocab is None or word in filter_vocab:
-                    if ' ' in vector:  # header
+                    if ' ' in vector:  # not a header
                         self.words.append(word)
                         vectors.append(vector.split(' '))
 
             self.vectors = np.array([list(map(float, l)) for l in vectors],
                                     dtype=np.float32)
             self.indices = {word: i for i, word in self.words}
+            if self.words[0] != '<unk>':
+                raise ValueError('The first word in the embedding is not <unk>!')
 
-    def __call__(self, sequence):
-        # data = np.zeros((len(sequence), self.vectors.shape[1]), dtype=np.float32)
-        indices = [self.indices.get(w, 0) for w in sequence]
-        return self.vectors[indices]
+    def __call__(self, sequence, length):
+        """
+        Converts the words in the sequence to embedding vectors. The length is
+        fixed; the resulting vector array is zero-padded.
+        """
+        data = np.zeros((length, self.vectors.shape[1]), dtype=np.float32)
+        min_len = min(len(sequence), length)
+        indices = [self.indices.get(w, 0) for w in sequence[:min_len]]
+        data[:min_len] = self.vectors[indices]
+        return data
 
     def dimensions(self):
         return self.vectors.shape[1]
@@ -179,7 +188,7 @@ class SequenceClassificationModel(object):
                             tf.argmax(self.prediction, 1))
         return tf.reduce_mean(tf.cast(mistakes, tf.float32))
 
-    def run_training(self, train_data, train_labels,
+    def run_training(self, train_iterator,
                      valid_data, valid_labels):
         sess = tf.Session(graph=self.graph)
         valid_feed = {self.data: valid_data, self.labels: valid_labels}
@@ -195,13 +204,13 @@ class SequenceClassificationModel(object):
             initial_step = 0
 
         # The actual training loop
-        for step, batch in enumerate(batches):
+        for step, batch in enumerate(train_iterator):
             feed = {self.data: batch[0], self.target: batch[1]}
             sess.run(self.optimize, feed=feed)
             if step % self.params.print_every == 0:
                 accuracy = sess.run(self.accuracy, feed=valid_feed)
                 print('{}: {:3.1f}%'.format(step + 1, 100 * accuracy))
- 
+
             # Model checkpoint
             if step % self.params.save_every == 0 and step > 0:
                 self.saver.save(sess, self.save_dir, global_step=step + initial_step)
@@ -229,13 +238,66 @@ class SequenceClassificationModel(object):
         sess.close()
 
 
+def iterate_batches(train_data, embedding, length, batch_size):
+    """
+    Creates a (training) batch from the data. This implementation presumes that
+    all data fits in memory.
+    """
+    index = 0
+    while True:
+        data = np.zeros((batch_size, length, embedding.dimensions()))
+        target = np.zeros((batch_size, 2))  # one-hot true/false
+        for _ in range(batch_size):
+            text, label = train_data[index]
+            data[index] = embedding(text)
+            target[index] = [1, 0] if label else [0, 1]
+            index = (index + 1) % len(data)
+        yield data, target
+
+
+def read_data(fn):
+    with openall(fn) as inf:
+        return zip([(t.split(' '), j) for j, t in
+                    (l.strip().split('\t') for l in inf)])
+
+
 def main():
     args = parse_arguments()
+
+    if args.vocab:
+        with openall(args.vocab) as inf:
+            filter_vocab = set(l.strip() for l in inf)
+    else:
+        filter_vocab = None
+
+    embedding = Embedding(args.embedding_file, filter_vocab)
+
+    train_data, train_labels = read_data(args.sentiment_prefix + '.train.tsv')
+    valid_data, valid_labels = read_data(args.sentiment_prefix + '.valid.tsv')
+    test_data, test_labels = read_data(args.sentiment_prefix + '.test.tsv')
+
+    length = max(
+        max(len(d) for d in train_data),
+        max(len(d) for d in valid_data),
+        max(len(d) for d in test_data)
+    )
+
+    tf_train_iterator = iterate_batches(train_data, train_labels, embedding,
+                                        length, args.batch_size)
+    tf_valid_data, tf_valid_labels = next(
+        iterate_batches(valid_data, valid_labels,
+                        embedding, length, len(valid_labels)))
+    tf_test_data, tf_test_labels = next(
+        iterate_batches(test_data, test_labels,
+                        embedding, length, len(test_labels)))
+
     params = AttrDict(
         name=args.model_name,
         rnn_cell=args.rnn_cell,
         rnn_hidden=args.num_nodes,
-        num_unrollings=args.num_unrollings,
+        #num_unrollings=args.num_unrollings,  # noqa
+        batch_size=args.batch_size,
+        num_unrollings=length,
         learning_rate=args.learning_rate,
         gradient_clipping=args.gradient_clipping,
         iterations=args.iterations,
@@ -243,6 +305,8 @@ def main():
         save_every=args.save_every
     )
     model = SequenceClassificationModel(params)
+    model.run_training(tf_train_iterator, tf_valid_data, tf_valid_labels)
+    model.run_test(tf_test_data, tf_test_labels)
 
 
 if __name__ == '__main__':
