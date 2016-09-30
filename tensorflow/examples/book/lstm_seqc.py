@@ -99,7 +99,7 @@ class SequenceClassificationModel(object):
             with tf.name_scope('model'):
                 self._create_graph()
             with tf.name_scope('global_ops'):
-                self.init = tf.initialize_all_variables(name='init')
+                self.init = tf.initialize_all_variables()
                 self.saver = tf.train.Saver(name='saver')
 
     def _create_graph(self):
@@ -134,6 +134,7 @@ class SequenceClassificationModel(object):
     def _prediction(self):
         """The recurrent network."""
         # The RNN
+        print(self.data.get_shape())
         output, _ = tf.nn.dynamic_rnn(
             cell=self.params.rnn_cell(self.params.rnn_hidden),
             inputs=self.data, sequence_length=self.length, dtype=tf.float32
@@ -171,11 +172,11 @@ class SequenceClassificationModel(object):
 
     def _loss(self):
         """Cross entropy loss."""
-        return -tf.reduce_sum(self.target * tf.lot(self.prediction))
+        return -tf.reduce_sum(self.target * tf.log(self.prediction))
 
     def _optimize(self):
         optimizer = tf.train.AdagradOptimizer(self.params.learning_rate)
-        gradient = optimizer.compute_gradients(self._loss())
+        gradient = optimizer.compute_gradients(self._loss(), aggregation_method=2)
         if self.params.gradient_clipping:
             limit = self.params.gradient_clipping
             gradient = [(tf.clip_by_value(g, -limit, limit), v)
@@ -192,7 +193,7 @@ class SequenceClassificationModel(object):
     def run_training(self, train_iterator,
                      valid_data, valid_labels):
         sess = tf.Session(graph=self.graph)
-        valid_feed = {self.data: valid_data, self.labels: valid_labels}
+        valid_feed = {self.data: valid_data, self.target: valid_labels}
 
         # Load the latest training checkpoint, if it exists
         ckpt = tf.train.get_checkpoint_state(self.save_dir)
@@ -206,10 +207,11 @@ class SequenceClassificationModel(object):
 
         # The actual training loop
         for step, batch in enumerate(train_iterator):
+            print(self.data.get_shape(), tf.shape(self.data))
             feed = {self.data: batch[0], self.target: batch[1]}
-            sess.run(self.optimize, feed=feed)
+            sess.run(self.optimize, feed_dict=feed)
             if step % self.params.print_every == 0:
-                accuracy = sess.run(self.accuracy, feed=valid_feed)
+                accuracy = sess.run(self.accuracy, feed_dict=valid_feed)
                 print('{}: {:3.1f}%'.format(step + 1, 100 * accuracy))
 
             # Model checkpoint
@@ -248,18 +250,18 @@ def iterate_batches(train_data, embedding, length, batch_size):
     while True:
         data = np.zeros((batch_size, length, embedding.dimensions()))
         target = np.zeros((batch_size, 2))  # one-hot true/false
-        for _ in range(batch_size):
+        for i in range(batch_size):
             text, label = train_data[index]
-            data[index] = embedding(text)
-            target[index] = [1, 0] if label else [0, 1]
+            data[i] = embedding(text, length)
+            target[i] = [1, 0] if label else [0, 1]
             index = (index + 1) % len(data)
         yield data, target
 
 
 def read_data(fn):
     with openall(fn) as inf:
-        return zip([(t.split(' '), j) for j, t in
-                    (l.strip().split('\t') for l in inf)])
+        return [(t.split(' '), bool(j)) for j, t in
+                (l.strip().split('\t') for l in inf)]
 
 
 def main():
@@ -273,24 +275,24 @@ def main():
 
     embedding = Embedding(args.embedding_file, filter_vocab)
 
-    train_data, train_labels = read_data(args.sentiment_prefix + '.train.tsv')
-    valid_data, valid_labels = read_data(args.sentiment_prefix + '.valid.tsv')
-    test_data, test_labels = read_data(args.sentiment_prefix + '.test.tsv')
+    train_data_labels = read_data(args.sentiment_prefix + '.train.tsv')
+    valid_data_labels = read_data(args.sentiment_prefix + '.valid.tsv')
+    test_data_labels = read_data(args.sentiment_prefix + '.test.tsv')
 
     length = max(
-        max(len(d) for d in train_data),
-        max(len(d) for d in valid_data),
-        max(len(d) for d in test_data)
+        max(len(d[0]) for d in train_data_labels),
+        max(len(d[0]) for d in valid_data_labels),
+        max(len(d[0]) for d in test_data_labels)
     )
 
-    tf_train_iterator = iterate_batches(train_data, train_labels, embedding,
+    tf_train_iterator = iterate_batches(train_data_labels, embedding,
                                         length, args.batch_size)
     tf_valid_data, tf_valid_labels = next(
-        iterate_batches(valid_data, valid_labels,
-                        embedding, length, len(valid_labels)))
+        iterate_batches(valid_data_labels,
+                        embedding, length, len(valid_data_labels)))
     tf_test_data, tf_test_labels = next(
-        iterate_batches(test_data, test_labels,
-                        embedding, length, len(test_labels)))
+        iterate_batches(test_data_labels,
+                        embedding, length, len(test_data_labels)))
 
     params = AttrDict(
         name=args.model_name,
@@ -303,7 +305,8 @@ def main():
         gradient_clipping=args.gradient_clipping,
         iterations=args.iterations,
         print_every=args.print_every,
-        save_every=args.save_every
+        save_every=args.save_every,
+        dim=embedding.dimensions()
     )
     model = SequenceClassificationModel(params)
     model.run_training(tf_train_iterator, tf_valid_data, tf_valid_labels)
