@@ -1,4 +1,4 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """Exports a toy linear regression inference graph.
 
 Exports a TensorFlow graph to /tmp/half_plus_two/ based on the Exporter
-format, go/tf-exporter.
+format.
 
 This graph calculates,
   y = a*x + b

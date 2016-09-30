@@ -121,6 +121,16 @@ Node* Var(Graph* g, const DataType dtype, const TensorShape& shape) {
   return ret;
 }
 
+Node* Var(Graph* g, const DataType dtype, const TensorShape& shape,
+          const string& name) {
+  Node* ret;
+  TF_CHECK_OK(NodeBuilder(name, "Variable")
+                  .Attr("dtype", dtype)
+                  .Attr("shape", shape)
+                  .Finalize(g, &ret));
+  return ret;
+}
+
 Node* Assign(Graph* g, Node* var, Node* val) {
   Node* ret;
   TF_CHECK_OK(NodeBuilder(g->NewName("n"), "Assign")
@@ -161,6 +171,17 @@ Node* Matmul(Graph* g, Node* in0, Node* in1, bool transpose_a,
                   .Input(in1)
                   .Attr("transpose_a", transpose_a)
                   .Attr("transpose_b", transpose_b)
+                  .Finalize(g, &ret));
+  return ret;
+}
+
+Node* BatchMatmul(Graph* g, Node* in0, Node* in1, bool adj_x, bool adj_y) {
+  Node* ret;
+  TF_CHECK_OK(NodeBuilder(g->NewName("n"), "BatchMatMul")
+                  .Input(in0)
+                  .Input(in1)
+                  .Attr("adj_x", adj_x)
+                  .Attr("adj_y", adj_y)
                   .Finalize(g, &ret));
   return ret;
 }
@@ -418,6 +439,18 @@ Node* BiasAdd(Graph* g, Node* value, Node* bias) {
                   .Input(value)
                   .Input(bias)
                   .Attr("T", DT_FLOAT)
+                  .Finalize(g, &ret));
+  return ret;
+}
+
+Node* Conv2D(Graph* g, Node* in0, Node* in1) {
+  Node* ret;
+  TF_CHECK_OK(NodeBuilder(g->NewName("n"), "Conv2D")
+                  .Input(in0)
+                  .Input(in1)
+                  .Attr("T", DT_FLOAT)
+                  .Attr("strides", {1, 1, 1, 1})
+                  .Attr("padding", "SAME")
                   .Finalize(g, &ret));
   return ret;
 }

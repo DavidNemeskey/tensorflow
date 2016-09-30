@@ -69,7 +69,7 @@ def maybe_download(filename):
   if not tf.gfile.Exists(filepath):
     filepath, _ = urllib.request.urlretrieve(SOURCE_URL + filename, filepath)
     with tf.gfile.GFile(filepath) as f:
-      size = f.Size()
+      size = f.size()
     print('Successfully downloaded', filename, size, 'bytes.')
   return filepath
 
@@ -82,10 +82,10 @@ def extract_data(filename, num_images):
   print('Extracting', filename)
   with gzip.open(filename) as bytestream:
     bytestream.read(16)
-    buf = bytestream.read(IMAGE_SIZE * IMAGE_SIZE * num_images)
+    buf = bytestream.read(IMAGE_SIZE * IMAGE_SIZE * num_images * NUM_CHANNELS)
     data = numpy.frombuffer(buf, dtype=numpy.uint8).astype(numpy.float32)
     data = (data - (PIXEL_DEPTH / 2.0)) / PIXEL_DEPTH
-    data = data.reshape(num_images, IMAGE_SIZE, IMAGE_SIZE, 1)
+    data = data.reshape(num_images, IMAGE_SIZE, IMAGE_SIZE, NUM_CHANNELS)
     return data
 
 

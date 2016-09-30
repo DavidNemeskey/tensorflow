@@ -68,10 +68,9 @@ add_library(tf_models_word2vec_kernels OBJECT ${tf_models_word2vec_kernels_srcs}
 target_include_directories(tf_models_word2vec_kernels PRIVATE
     ${tensorflow_source_dir}
     ${eigen_INCLUDE_DIRS}
-    ${re2_INCLUDES}
 )
 
-add_dependencies(tf_models_word2vec_ops
+add_dependencies(tf_models_word2vec_kernels
     tf_core_cpu
 )
 

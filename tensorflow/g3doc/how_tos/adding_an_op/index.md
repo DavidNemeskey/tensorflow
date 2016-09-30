@@ -139,7 +139,7 @@ to compile your Op into a dynamic library.
 ```bash
 TF_INC=$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_include())')
 
-g++ -std=c++11 -shared zero_out.cc -o zero_out.so -fPIC -I $TF_INC
+g++ -std=c++11 -shared zero_out.cc -o zero_out.so -fPIC -I $TF_INC -O2
 ```
 
 On Mac OS X, the additional flag "-undefined dynamic_lookup" is required when
@@ -532,7 +532,7 @@ Your Op registration now specifies that the input's type must be `float`, or
 > REGISTER_OP("StringToNumber")
 >     .Input("string_tensor: string")
 >     .Output("output: out_type")
->     .Attr("out_type: {float, int32}");
+>     .Attr("out_type: {float, int32} = DT_FLOAT");
 >     .Doc(R"doc(
 > Converts each string in the input Tensor to the specified numeric type.
 > )doc");
@@ -620,7 +620,7 @@ REGISTER\_OP("ZeroOut")
 
 Instead of writing another `OpKernel` with redundant code as above, often you
 will be able to use a C++ template instead.  You will still have one kernel
-registration (`REGISTER\_KERNEL\_BUILDER` call) per overload.
+registration (`REGISTER_KERNEL_BUILDER` call) per overload.
 
 <code class="lang-c++"><pre>
 <b>template &lt;typename T&gt;</b>
@@ -927,7 +927,7 @@ There are several ways to preserve backwards-compatibility.
 
 5. Namespace any new Ops you create, by prefixing the Op names with something
    unique to your project. This avoids having your Op colliding with any Ops
-   that might be included in future versions of Tensorflow.
+   that might be included in future versions of TensorFlow.
 
 6. Plan ahead! Try to anticipate future uses for the Op. Some signature changes
    can't be done in a compatible way (for example, making a list of the same
@@ -1000,6 +1000,11 @@ cuda_op_kernel.cu.o -I $TF_INC -fPIC -lcudart
 `cuda_op_kernel.so` produced above can be loaded as usual in Python, using the
 `tf.load_op_library` function.
 
+Note that if your CUDA libraries are not installed in `/usr/local/lib64`,
+you'll need to specify the path explicitly in the second (g++) command above.
+For example, add `-L /usr/local/cuda-8.0/lib64/` if your CUDA is installed in 
+`/usr/local/cuda-8.0`.
+
 ## Implement the gradient in Python
 
 Given a graph of ops, TensorFlow uses automatic differentiation
@@ -1011,13 +1016,13 @@ function which computes gradients with respect to the ops' inputs given
 gradients with respect to the ops' outputs.
 
 Mathematically, if an op computes \\(y = f(x)\\) the registered gradient op
-converts gradients \\(\partial / \partial y\\) with respect to \\(y\\) into
-gradients \\(\partial / \partial x\\) with respect to \\(x\\) via the chain
-rule:
+converts gradients \\(\partial L/ \partial y\\) of loss \\(L\\) with respect to
+\\(y\\) into gradients \\(\partial L/ \partial x\\) with respect to \\(x\\) via
+the chain rule:
 
-$$\frac{\partial}{\partial x}
-    = \frac{\partial}{\partial y} \frac{\partial y}{\partial x}
-    = \frac{\partial}{\partial y} \frac{\partial f}{\partial x}.$$
+$$\frac{\partial L}{\partial x}
+    = \frac{\partial L}{\partial y} \frac{\partial y}{\partial x}
+    = \frac{\partial L}{\partial y} \frac{\partial f}{\partial x}.$$
 
 In the case of `ZeroOut`, only one entry in the input affects the output, so the
 gradient with respect to the input is a sparse "one hot" tensor.  This is
@@ -1071,7 +1076,7 @@ Details about registering gradient functions with
   integer index `i`, the gradient function would `return [x_grad, None]`.
 
 * If there is no meaningful gradient for the op at all, use
-  `ops.NoGradient("OpName")` to disable automatic differentiation.
+  `ops.NotDifferentiable("OpName")` to disable automatic differentiation.
 
 Note that at the time the gradient function is called, only the data flow graph
 of ops is available, not the tensor data itself.  Thus, all computation must be

@@ -1,4 +1,4 @@
-#  Copyright 2015-present The Scikit Flow Authors. All Rights Reserved.
+#  Copyright 2016 The TensorFlow Authors. All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-from sklearn import datasets, metrics, cross_validation
+from sklearn import cross_validation
+from sklearn import datasets
+from sklearn import metrics
 import tensorflow as tf
 from tensorflow.contrib import layers
 from tensorflow.contrib import learn
@@ -57,8 +59,9 @@ def main(unused_argv):
   classifier = learn.Estimator(model_fn=my_model)
   classifier.fit(x_train, y_train, steps=1000)
 
-  y_predicted = classifier.predict(x_test)
-  score = metrics.accuracy_score(y_test, y_predicted['class'])
+  y_predicted = [
+      p['class'] for p in classifier.predict(x_test, as_iterable=True)]
+  score = metrics.accuracy_score(y_test, y_predicted)
   print('Accuracy: {0:f}'.format(score))
 
 

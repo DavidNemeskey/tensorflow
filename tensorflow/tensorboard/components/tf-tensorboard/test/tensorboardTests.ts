@@ -15,11 +15,10 @@ limitations under the License.
 describe('tf-tensorboard tests', () => {
   window.HTMLImports.whenReady(() => {
     let assert = chai.assert;
-    let demoRouter = TF.Backend.router('data', true);
     let tensorboard: any;
     beforeEach(function() {
       tensorboard = fixture('tensorboardFixture');
-      tensorboard.router = demoRouter;
+      tensorboard.demoDir = 'data';
       tensorboard.autoReloadEnabled = false;
     });
 
@@ -35,14 +34,22 @@ describe('tf-tensorboard tests', () => {
       });
     });
 
+    it('respects router manually provided', function() {
+      let router = TF.Backend.router('data', true);
+      tensorboard.router = router;
+      tensorboard.demoDir = null;
+      assert.equal(tensorboard._backend.router, router);
+    });
+
     it('renders injected content', function() {
       let injected = tensorboard.querySelector('#inject-me');
       assert.isNotNull(injected);
     });
 
-    describe('non-graph tabs: reloading the selected dashboard', function() {
+    describe('reloading the selected dashboard', function() {
       TF.Globals.TABS.forEach((name, tabIndex) => {
-        if (name === 'graphs') {
+        // These tabs do not support reload mode.
+        if (name === 'graphs' || name === 'projections') {
           return;
         }
         it(`${name}: calling reload reloads dashboard`, function(done) {

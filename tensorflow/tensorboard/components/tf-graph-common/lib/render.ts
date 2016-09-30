@@ -161,6 +161,7 @@ export class RenderGraphInfo {
   // node.
   private hasSubhierarchy: {[nodeName: string]: boolean};
   root: RenderGroupNodeInfo;
+  traceInputs: Boolean;
 
   constructor(hierarchy: hierarchy.Hierarchy, displayingStats: boolean) {
     this.hierarchy = hierarchy;
@@ -175,6 +176,7 @@ export class RenderGraphInfo {
     this.index[hierarchy.root.name] = this.root;
     this.buildSubhierarchy(hierarchy.root.name);
     this.root.expanded = true;
+    this.traceInputs = false;
   }
 
   computeScales() {
@@ -795,6 +797,12 @@ export class Annotation {
   width: number;
   height: number;
   /**
+   * The names of nodes on either side of the metaedge for this annotation.
+   * Empty strings if the annotation is not associated with a metaedge.
+   */
+  v: string;
+  w: string;
+  /**
    * A flag whether it is an in-annotation (if true) or
    * out-annotation  (if false).
    */
@@ -834,6 +842,11 @@ export class Annotation {
     this.dy = 0;
     this.width = 0;
     this.height = 0;
+    // Properties needed for generating an ID for the edge's path element if
+    // this annotation is associated with a metaedge.
+    let metaedgeIfItExists = renderMetaedgeInfo && renderMetaedgeInfo.metaedge;
+    this.v = metaedgeIfItExists ? metaedgeIfItExists.v : '';
+    this.w = metaedgeIfItExists ? metaedgeIfItExists.w : '';
 
     this.isIn = isIn;
     this.points = [];

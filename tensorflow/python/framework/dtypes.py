@@ -220,7 +220,7 @@ class DType(object):
 
     The conversion rules are as follows:
 
-    ```
+    ```python
     DType(T)       .is_compatible_with(DType(T))        == True
     DType(T)       .is_compatible_with(DType(T).as_ref) == True
     DType(T).as_ref.is_compatible_with(DType(T))        == False
@@ -240,8 +240,13 @@ class DType(object):
 
   def __eq__(self, other):
     """Returns True iff this DType refers to the same type as `other`."""
-    return (other is not None
-            and self._type_enum == as_dtype(other).as_datatype_enum)
+    if other is None:
+      return False
+    try:
+      dtype = as_dtype(other).as_datatype_enum
+      return self._type_enum == dtype
+    except TypeError:
+      return False
 
   def __ne__(self, other):
     """Returns True iff self != other."""

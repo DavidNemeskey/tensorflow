@@ -28,6 +28,12 @@ if [[ ! -f "./downloads/protobuf/autogen.sh" ]]; then
     exit 1
 fi
 
+if [ "$#" -gt 1 ]; then
+    JOBS_COUNT=$1
+else
+    JOBS_COUNT=4
+fi
+
 GENDIR=`pwd`/gen/protobuf_ios/
 LIBDIR=${GENDIR}lib
 mkdir -p ${LIBDIR}
@@ -39,9 +45,9 @@ IPHONEOS_SYSROOT=`xcrun --sdk iphoneos --show-sdk-path`
 IPHONESIMULATOR_PLATFORM=`xcrun --sdk iphonesimulator --show-sdk-platform-path`
 IPHONESIMULATOR_SYSROOT=`xcrun --sdk iphonesimulator --show-sdk-path`
 IOS_SDK_VERSION=`xcrun --sdk iphoneos --show-sdk-version`
-MIN_SDK_VERSION=9.2
+MIN_SDK_VERSION=8.2
 
-CFLAGS="-DNDEBUG -g -O0 -pipe -fPIC -fcxx-exceptions"
+CFLAGS="-DNDEBUG -Os -pipe -fPIC -fno-exceptions"
 CXXFLAGS="${CFLAGS} -std=c++11 -stdlib=libc++"
 LDFLAGS="-stdlib=libc++"
 LIBS="-lc++ -lc++abi"
@@ -88,7 +94,7 @@ ${LDFLAGS} \
 -L${IPHONESIMULATOR_SYSROOT}/usr/lib/ \
 -L${IPHONESIMULATOR_SYSROOT}/usr/lib/system" \
 "LIBS=${LIBS}"
-make
+make -j ${JOBS_COUNT}
 make install
 
 make distclean
@@ -116,7 +122,7 @@ ${LDFLAGS} \
 -L${IPHONESIMULATOR_SYSROOT}/usr/lib/ \
 -L${IPHONESIMULATOR_SYSROOT}/usr/lib/system" \
 "LIBS=${LIBS}"
-make
+make -j ${JOBS_COUNT}
 make install
 
 make distclean
@@ -140,7 +146,7 @@ LDFLAGS="-arch armv7 \
 -miphoneos-version-min=${MIN_SDK_VERSION} \
 ${LDFLAGS}" \
 "LIBS=${LIBS}"
-make
+make -j ${JOBS_COUNT}
 make install
 
 make distclean
@@ -164,7 +170,7 @@ LDFLAGS="-arch armv7s \
 -miphoneos-version-min=${MIN_SDK_VERSION} \
 ${LDFLAGS}" \
 "LIBS=${LIBS}"
-make
+make -j ${JOBS_COUNT}
 make install
 
 make distclean
@@ -187,7 +193,7 @@ LDFLAGS="-arch arm64 \
 -miphoneos-version-min=${MIN_SDK_VERSION} \
 ${LDFLAGS}" \
 "LIBS=${LIBS}"
-make
+make -j ${JOBS_COUNT}
 make install
 
 lipo \
