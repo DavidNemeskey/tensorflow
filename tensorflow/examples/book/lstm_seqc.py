@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-"""Sequence classification with LSTM."""
+"""
+Sequence classification with LSTM.
+
+Doesn't work because the length is too big (max. length is 2700) for dynamic_rnn
+to fit into the GPU memory.
+"""
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
 import os
