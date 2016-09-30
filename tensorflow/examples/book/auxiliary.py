@@ -9,12 +9,12 @@ class AttrDict(dict):
     """Makes our life easier."""
     def __getattr__(self, key):
         if key not in self:
-            raise AttributeError
+            raise AttributeError('key {} missing'.format(key))
         return self[key]
 
     def __setattr__(self, key, value):
         if key not in self:
-            raise AttributeError
+            raise AttributeError('key {} missing'.format(key))
         self[key] = value
 
 
