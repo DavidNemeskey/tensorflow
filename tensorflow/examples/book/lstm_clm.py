@@ -18,15 +18,15 @@ from auxiliary import AttrDict, openall
 BATCH, TIME, VOCAB = range(3)
 
 class CharacterLM(object):
-    def __init__(self, params):
+    def __init__(self, params, initial=None):
         self.name = params.name
         self.save_dir = os.path.join('saves', self.name)
         self.params = params
         self.graph = tf.Graph()
+        self.initial = initial
 
         with self.graph.as_default():
             with tf.name_scope('model'):
-                self.optimizer = tf.train.AdamOptimizer(params.learning_rate)
                 self._create_graph()
             with tf.name_scope('global_ops'):
                 self.init = tf.initialize_all_variables()
@@ -35,6 +35,7 @@ class CharacterLM(object):
     def _create_graph(self):
         """This creates the graph."""
         self.data, self.target, self.mask, self.length = self._data()
+        self.optimizer = tf.train.AdamOptimizer(self.params.learning_rate)
         self.prediction, self.state = self._forward()
         self.loss, self.error, self.logprob = \
             self._cost(), self._error(), self._logprob()
@@ -68,8 +69,8 @@ class CharacterLM(object):
             tf.float32, [None, max_length, self.params.vocabulary])
         data = tf.slice(self.sequence, (0, 0, 0), (-1, max_length - 1, -1))
         target = tf.slice(self.sequence, (0, 1, 0), (-1, -1, -1))
-        mask = tf.reduce_max(tf.abs(self.target), reduction_indices=VOCAB)
-        length = tf.reduce_sum(self.mask, reduction_indices=TIME)  # so /batch
+        mask = tf.reduce_max(tf.abs(target), reduction_indices=VOCAB)
+        length = tf.reduce_sum(mask, reduction_indices=TIME)  # so /batch
         return data, target, mask, length
 
     def _forward(self):
@@ -169,7 +170,8 @@ class CharacterLM(object):
         the batch.
         """
         data *= self.mask
-        length = tf.reduce_max(self.length, 1)  # To protect against / 0
+        length = tf.maximum(self.length, 1)  # To protect against / 0
+        # length = tf.reduce_sum(self.length, 0)  # To protect against / 0
         data = tf.reduce_sum(data, reduction_indices=TIME) / length
         return tf.reduce_mean(data)  # The avg. data / batch
 
@@ -184,6 +186,8 @@ class CharacterLM(object):
 
             last_epoch = self._init_or_load_session(sess)
             batches = iter(batcher)
+            print('Epoch {:2d}                 valid PPL {:5.1f}'.format(
+                last_epoch, self._perplexity(sess, batches=valid_batches)))
             for epoch in range(last_epoch, self.params.epochs + 1):
                 logprobs = []
                 for _ in range(self.params.epoch_size):
@@ -194,7 +198,7 @@ class CharacterLM(object):
                 print('Epoch {:2d} train PPL {:5.1f} valid PPL {:5.1f}'.format(
                     epoch, train_ppl, valid_ppl))
 
-    def run_test(self, test_text):
+    def run_evaluation(self, test_text):
         """Computes the perplexity of the test set."""
         with tf.Session(graph=self.graph) as sess:
             checkpoint = tf.train.get_checkpoint_state(self.save_dir)
@@ -222,9 +226,8 @@ class CharacterLM(object):
         return logprob
 
     def _perplexity(self, sess, batches=None, logprobs=None):
-        if batches is None:
-            logprobs = [sess.run(self.logprob, {self.sequence: batch})
-                        for batch in batches]
+        if logprobs is None:
+            logprobs = [sess.run(self.logprob, {self.sequence: batches})]
         return 2 ** -(sum(logprobs) / len(logprobs))
 
     def _init_or_load_session(self, sess):
@@ -256,11 +259,11 @@ def parse_arguments():
     #                     help='unroll the RNN for how many steps [10].')
     parser.add_argument('--num-nodes', '-n', type=int, default=64,
                         help='use how many RNN cells [64].')
-    parser.add_argument('--window-size', '-w', type=int, default=10,
+    parser.add_argument('--window-size', '-w', type=int, default=50,
                         help='the text window size [50].')
     parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
                         default='lstm', help='the RNN cell to use [lstm].')
-    parser.add_argument('--layers', '-l', type=int, default=1,
+    parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
     parser.add_argument('--epochs', '-e', type=int, default=20,
                         help='the default number of epochs [20].')
