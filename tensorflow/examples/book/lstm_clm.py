@@ -7,10 +7,12 @@ from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
 from builtins import range
 import os
+import re
 
 import numpy as np
 import tensorflow as tf
 
+from arxiv_fetcher import Preprocessing
 from auxiliary import AttrDict, openall
 
 BATCH, TIME, VOCAB = range(3)
@@ -18,10 +20,13 @@ BATCH, TIME, VOCAB = range(3)
 class CharacterLM(object):
     def __init__(self, params):
         self.name = params.name
+        self.save_dir = os.path.join('saves', self.name)
         self.params = params
-        
+        self.graph = tf.Graph()
+
         with self.graph.as_default():
             with tf.name_scope('model'):
+                self.optimizer = tf.train.AdamOptimizer(params.learning_rate)
                 self._create_graph()
             with tf.name_scope('global_ops'):
                 self.init = tf.initialize_all_variables()
@@ -31,6 +36,9 @@ class CharacterLM(object):
         """This creates the graph."""
         self.data, self.target, self.mask, self.length = self._data()
         self.prediction, self.state = self._forward()
+        self.loss, self.error, self.logprob = \
+            self._cost(), self._error(), self._logprob()
+        self.optimize = self._optimize()
 
     def _data(self):
         """
@@ -55,7 +63,9 @@ class CharacterLM(object):
         up the mask along the time axis in order to obtain the length of each
         sequence.
         """
-        max_length = int(self.sequence.get_shape()[1])
+        max_length = self.params.max_length
+        self.sequence = tf.placeholder(
+            tf.float32, [None, max_length, self.params.vocabulary])
         data = tf.slice(self.sequence, (0, 0, 0), (-1, max_length - 1, -1))
         target = tf.slice(self.sequence, (0, 1, 0), (-1, -1, -1))
         mask = tf.reduce_max(tf.abs(self.target), reduction_indices=VOCAB)
@@ -97,11 +107,49 @@ class CharacterLM(object):
         output = tf.reshape(output, [-1, max_length, out_size])
         return output
 
+    def _optimize(self):
+        gradient = self.optimizer.compute_gradients(self._cost())
+        if self.params.gradient_clipping:
+            limit = self.params.gradient_clipping
+            gradient = [
+                (tf.clip_by_value(g, -limit, limit), v)
+                if g is not None else (None, v)
+                for g, v in gradient]
+        optimize = self.optimizer.apply_gradients(gradient)
+        return optimize
+
     def _cost(self):
+        """Cross-entropy loss."""
         prediction = tf.clip_by_value(self.prediction, 1e-10, 1.0)
         cost = self.target * tf.log(prediction)
         cost = -tf.reduce_sum(cost, reduction_indices=VOCAB)
         return self._average(cost)
+
+    def _error(self):
+        """This is basically invers accuracy."""
+        error = tf.not_equal(
+            tf.argmax(self.prediction, VOCAB), tf.argmax(self.target, VOCAB))
+        error = tf.cast(error, tf.float32)
+        return self._average(error)
+
+    def _logprob(self):
+        """
+        The logprob property is new. It describes the probability that our
+        model assigned to the correct next character in logarithmic space. This
+        is basically the negative cross entropy transformed into logarithmic
+        space and averaged there. Converting the result back into linear space
+        yields the so-called perplexity, a common measure to evaluate the
+        performance of language models.
+
+        The perplexity can even become infinity when the model assigns a zero
+        probability to the next character once. We prevent this extreme case by
+        clamping the prediction probabilities within a very small positive
+        number and one.
+        """
+        logprob = tf.mul(self.prediction, self.target)
+        logprob = tf.reduce_max(logprob, reduction_indices=VOCAB)
+        logprob = tf.log(tf.clip_by_value(logprob, 1e-10, 1.0)) / tf.log(2.0)
+        return self._average(logprob)
 
     def _average(self, data):
         """
@@ -124,3 +172,148 @@ class CharacterLM(object):
         length = tf.reduce_max(self.length, 1)  # To protect against / 0
         data = tf.reduce_sum(data, reduction_indices=TIME) / length
         return tf.reduce_mean(data)  # The avg. data / batch
+
+    def run_training(self, training_texts, valid_text):
+        """Runs the training with the texts given."""
+        with tf.Session(graph=self.graph) as sess:
+            batcher = Preprocessing(training_texts, self.params.max_length,
+                                    self.params.batch_size)
+            valid_batches = batcher(
+                [valid_text[i:i + self.params.max_length] for i
+                 in range(0, len(valid_text), self.params.max_length)])
+
+            last_epoch = self._init_or_load_session(sess)
+            batches = iter(batcher)
+            for epoch in range(last_epoch, self.params.epochs + 1):
+                logprobs = []
+                for _ in range(self.params.epoch_size):
+                    logprobs.append(self._optimization(next(batches), sess))
+                self.saver.save(sess, self.save_dir, epoch)
+                train_ppl = self._perplexity(sess, logprobs=logprobs)
+                valid_ppl = self._perplexity(sess, batches=valid_batches)
+                print('Epoch {:2d} train PPL {:5.1f} valid PPL {:5.1f}'.format(
+                    epoch, train_ppl, valid_ppl))
+
+    def run_test(self, test_text):
+        """Computes the perplexity of the test set."""
+        with tf.Session(graph=self.graph) as sess:
+            checkpoint = tf.train.get_checkpoint_state(self.save_dir)
+            if checkpoint and checkpoint.model_checkpoint_path:
+                path = checkpoint.model_checkpoint_path
+                print('Load checkpoint', path)
+                self.saver.restore(sess, path)
+
+                batcher = Preprocessing([], self.params.max_length,
+                                        self.params.batch_size)
+                test_batches = batcher(
+                    [test_text[i:i + self.params.max_length] for i
+                     in range(0, len(test_text), self.params.max_length)])
+                test_ppl = self._perplexity(sess, batches=test_batches)
+                print('Test set perplexity: {:5.1f}'.format(test_ppl))
+            else:
+                print('No checkpoint available; train a model first.')
+
+    def _optimization(self, batch, sess):
+        """Runs the optimization."""
+        logprob, _ = sess.run((self.logprob, self.optimize),
+                              {self.sequence: batch})
+        if np.isnan(logprob):
+            raise Exception('training diverged')
+        return logprob
+
+    def _perplexity(self, sess, batches=None, logprobs=None):
+        if batches is None:
+            logprobs = [sess.run(self.logprob, {self.sequence: batch})
+                        for batch in batches]
+        return 2 ** -(sum(logprobs) / len(logprobs))
+
+    def _init_or_load_session(self, sess):
+        """Initiates or loads a session."""
+        checkpoint = tf.train.get_checkpoint_state(self.save_dir)
+        if checkpoint and checkpoint.model_checkpoint_path:
+            path = checkpoint.model_checkpoint_path
+            print('Load checkpoint', path)
+            self.saver.restore(sess, path)
+            epoch = int(re.search(r'-(\d+)$', path).group(1)) + 1
+        else:
+            if not os.path.isdir(self.save_dir):
+                os.makedirs(self.save_dir)
+            print('Randomly initialize variables')
+            sess.run(tf.initialize_all_variables())
+            epoch = 1
+        return epoch
+
+
+def parse_arguments():
+    parser = ArgumentParser(
+        description='Character-based language modeling with RNN.')
+    parser.add_argument('text_file', help='the text file to train on.')
+    parser.add_argument('--model-name', '-m', default='RNN CLM',
+                        help='the name of the model [RNN CLM].')
+    parser.add_argument('--batch-size', '-b', type=int, default=64,
+                        help='the training batch size [64].')
+    # parser.add_argument('--num-unrollings', '-u', type=int, default=10,
+    #                     help='unroll the RNN for how many steps [10].')
+    parser.add_argument('--num-nodes', '-n', type=int, default=64,
+                        help='use how many RNN cells [64].')
+    parser.add_argument('--window-size', '-w', type=int, default=10,
+                        help='the text window size [50].')
+    parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
+                        default='lstm', help='the RNN cell to use [lstm].')
+    parser.add_argument('--layers', '-l', type=int, default=1,
+                        help='the number of RNN laercell to use [lstm].')
+    parser.add_argument('--epochs', '-e', type=int, default=20,
+                        help='the default number of epochs [20].')
+    parser.add_argument('--epoch-size', '-s', type=int, default=200,
+                        help='the default epoch size [200]. The number of '
+                             'batches processed in an epoch.')
+    parser.add_argument('--learning-rate', '-l', type=float, default=0.02,
+                        help='the default learning rate [0.02].')
+    parser.add_argument('--gradient-clipping', '-g', action='store_true',
+                        help='if gradient clipping should be used.')
+    args = parser.parse_args()
+
+    if args.rnn_cell == 'gru':
+        args.rnn_cell = tf.nn.rnn_cell.GRUCell
+    elif args.rnn_cell == 'lstm':
+        args.rnn_cell = tf.nn.rnn_cell.BasicLSTMCell
+    else:
+        args.rnn_cell = tf.nn.rnn_cell.BasicRnnCell
+    return args
+
+
+def load_texts(text_file, ):
+    train_texts, valid_texts, test_texts = [], [], []
+    with openall(text_file) as inf:
+        for i, l in enumerate(inf):
+            if i % 10 != 9:
+                train_texts.append(l.strip())
+            else:
+                (test_texts if i % 20 == 0 else valid_texts).append(l.strip())
+    return train_texts, ' '.join(valid_texts), ' '.join(test_texts)
+
+
+def main():
+    args = parse_arguments()
+
+    train_texts, valid_text, test_text = load_texts(args.text_file)
+    params = AttrDict(
+        name=args.model_name,
+        rnn_cell=args.rnn_cell,
+        rnn_hidden=args.num_nodes,
+        rnn_layers=args.layers,
+        batch_size=args.batch_size,
+        max_length=args.window_size,
+        vocabulary=len(Preprocessing.VOCABULARY),
+        learning_rate=args.learning_rate,
+        gradient_clipping=args.gradient_clipping,
+        epochs=args.epochs,
+        epoch_size=args.epoch_size,
+    )
+    lm = CharacterLM(params)
+    lm.run_training(train_texts, valid_text)
+    lm.run_evaluation(test_text)
+
+
+if __name__ == '__main__':
+    main()
