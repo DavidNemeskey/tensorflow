@@ -175,9 +175,17 @@ class CharacterLM(object):
         data = tf.reduce_sum(data, reduction_indices=TIME) / length
         return tf.reduce_mean(data)  # The avg. data / batch
 
-    def run_training(self, training_texts, valid_text):
+    @staticmethod
+    def _get_config(gpu_memory):
+        if gpu_memory:
+            return tf.ConfigProto(gpu_options=tf.GPUOptions(
+                per_process_gpu_memory_fraction=gpu_memory))
+        else:
+            return None
+
+    def run_training(self, training_texts, valid_text, gpu_memory=None):
         """Runs the training with the texts given."""
-        with tf.Session(graph=self.graph) as sess:
+        with tf.Session(graph=self.graph, config=self._get_config(gpu_memory)) as sess:
             batcher = Preprocessing(training_texts, self.params.max_length,
                                     self.params.batch_size)
             valid_batches = batcher(
@@ -188,23 +196,29 @@ class CharacterLM(object):
             batches = iter(batcher)
             print('Epoch {:2d}                 valid PPL {:5.1f}'.format(
                 last_epoch, self._perplexity(sess, batches=valid_batches)))
+            valid_ppls = []
             for epoch in range(last_epoch, self.params.epochs + 1):
                 logprobs = []
                 for _ in range(self.params.epoch_size):
                     logprobs.append(self._optimization(next(batches), sess))
-                self.saver.save(sess, self.save_dir, epoch)
+                self.saver.save(
+                    sess, os.path.join(self.save_dir, 'model'), epoch)
                 train_ppl = self._perplexity(sess, logprobs=logprobs)
                 valid_ppl = self._perplexity(sess, batches=valid_batches)
                 print('Epoch {:2d} train PPL {:5.1f} valid PPL {:5.1f}'.format(
                     epoch, train_ppl, valid_ppl))
+                valid_ppls.append(valid_ppl)
+                # Overfitting
+                if np.argmin(valid_ppls) < len(valid_ppls) - 2:
+                    print('Stopping training due to overfitting.')
+                    return
 
-    def run_evaluation(self, test_text):
+    def run_evaluation(self, test_text, gpu_memory=None):
         """Computes the perplexity of the test set."""
-        with tf.Session(graph=self.graph) as sess:
+        with tf.Session(graph=self.graph, config=self._get_config(gpu_memory)) as sess:
             checkpoint = tf.train.get_checkpoint_state(self.save_dir)
             if checkpoint and checkpoint.model_checkpoint_path:
                 path = checkpoint.model_checkpoint_path
-                print('Load checkpoint', path)
                 self.saver.restore(sess, path)
 
                 batcher = Preprocessing([], self.params.max_length,
@@ -227,7 +241,11 @@ class CharacterLM(object):
 
     def _perplexity(self, sess, batches=None, logprobs=None):
         if logprobs is None:
-            logprobs = [sess.run(self.logprob, {self.sequence: batches})]
+            logprobs = [
+                sess.run(self.logprob,
+                         {self.sequence: batches[b:b + self.params.batch_size]})
+                for b in range(0, len(batches), self.params.batch_size)
+            ]
         return 2 ** -(sum(logprobs) / len(logprobs))
 
     def _init_or_load_session(self, sess):
@@ -253,12 +271,12 @@ def parse_arguments():
     parser.add_argument('text_file', help='the text file to train on.')
     parser.add_argument('--model-name', '-m', default='RNN CLM',
                         help='the name of the model [RNN CLM].')
-    parser.add_argument('--batch-size', '-b', type=int, default=64,
-                        help='the training batch size [64].')
+    parser.add_argument('--batch-size', '-b', type=int, default=100,
+                        help='the training batch size [100].')
     # parser.add_argument('--num-unrollings', '-u', type=int, default=10,
     #                     help='unroll the RNN for how many steps [10].')
-    parser.add_argument('--num-nodes', '-n', type=int, default=64,
-                        help='use how many RNN cells [64].')
+    parser.add_argument('--num-nodes', '-n', type=int, default=200,
+                        help='use how many RNN cells [200].')
     parser.add_argument('--window-size', '-w', type=int, default=50,
                         help='the text window size [50].')
     parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
@@ -272,8 +290,10 @@ def parse_arguments():
                              'batches processed in an epoch.')
     parser.add_argument('--learning-rate', '-l', type=float, default=0.02,
                         help='the default learning rate [0.02].')
-    parser.add_argument('--gradient-clipping', '-g', action='store_true',
-                        help='if gradient clipping should be used.')
+    parser.add_argument('--gradient-clipping', '-g', type=float, default=None,
+                        help='the limit for gradient clipping [None].')
+    parser.add_argument('--gpu-memory', type=float, default=None,
+                        help='limit on the GPU memory ratio [None].')
     args = parser.parse_args()
 
     if args.rnn_cell == 'gru':
@@ -292,7 +312,7 @@ def load_texts(text_file, ):
             if i % 10 != 9:
                 train_texts.append(l.strip())
             else:
-                (test_texts if i % 20 == 0 else valid_texts).append(l.strip())
+                (test_texts if i % 20 == 19 else valid_texts).append(l.strip())
     return train_texts, ' '.join(valid_texts), ' '.join(test_texts)
 
 
@@ -314,8 +334,8 @@ def main():
         epoch_size=args.epoch_size,
     )
     lm = CharacterLM(params)
-    lm.run_training(train_texts, valid_text)
-    lm.run_evaluation(test_text)
+    lm.run_training(train_texts, valid_text, args.gpu_memory)
+    lm.run_evaluation(test_text, args.gpu_memory)
 
 
 if __name__ == '__main__':
