@@ -18,15 +18,15 @@ from auxiliary import AttrDict, openall
 BATCH, TIME, VOCAB = range(3)
 
 class CharacterLM(object):
-    def __init__(self, params, initial=None):
+    def __init__(self, params, initial_fun=None):
         self.name = params.name
         self.save_dir = os.path.join('saves', self.name)
         self.params = params
         self.graph = tf.Graph()
-        self.initial = initial
 
         with self.graph.as_default():
             with tf.name_scope('model'):
+                self.initial = initial_fun() if initial_fun else None
                 self._create_graph()
             with tf.name_scope('global_ops'):
                 self.init = tf.initialize_all_variables()
@@ -209,7 +209,10 @@ class CharacterLM(object):
                     epoch, train_ppl, valid_ppl))
                 valid_ppls.append(valid_ppl)
                 # Overfitting
-                if np.argmin(valid_ppls) < len(valid_ppls) - 2:
+                if (
+                    self.params.early_stopping and
+                    np.argmin(valid_ppls) < len(valid_ppls) - 2
+                ):
                     print('Stopping training due to overfitting.')
                     return
 
@@ -292,6 +295,10 @@ def parse_arguments():
                         help='the default learning rate [0.02].')
     parser.add_argument('--gradient-clipping', '-g', type=float, default=None,
                         help='the limit for gradient clipping [None].')
+    parser.add_argument('--no-early-stopping', dest='early_stopping',
+                        action='store_false',
+                        help='do not stop when the validation set performance '
+                             'begins detoriating [False].')
     parser.add_argument('--gpu-memory', type=float, default=None,
                         help='limit on the GPU memory ratio [None].')
     args = parser.parse_args()
@@ -332,6 +339,7 @@ def main():
         gradient_clipping=args.gradient_clipping,
         epochs=args.epochs,
         epoch_size=args.epoch_size,
+        early_stopping=args.early_stopping
     )
     lm = CharacterLM(params)
     lm.run_training(train_texts, valid_text, args.gpu_memory)
