@@ -97,7 +97,6 @@ class Preprocessing:
         for text in self.texts:
             for i in range(0, len(text) - self.length + 1, self.length // 2):
                 windows.append(text[i: i + self.length])
-                print(windows[-1])
         assert all(len(x) == len(windows[0]) for x in windows)
         while True:
             random.shuffle(windows)
