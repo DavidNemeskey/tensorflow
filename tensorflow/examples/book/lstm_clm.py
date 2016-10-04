@@ -6,6 +6,7 @@
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
 from builtins import range
+import glob
 import os
 import re
 
@@ -208,13 +209,37 @@ class CharacterLM(object):
                 print('Epoch {:2d} train PPL {:5.1f} valid PPL {:5.1f}'.format(
                     epoch, train_ppl, valid_ppl))
                 valid_ppls.append(valid_ppl)
-                # Overfitting
-                if (
-                    self.params.early_stopping and
-                    np.argmin(valid_ppls) < len(valid_ppls) - 2
-                ):
-                    print('Stopping training due to overfitting.')
+                # Check for overfitting
+                if self._stop_early(valid_ppls):
                     return
+
+    def _stop_early(self, valid_ppls):
+        """
+        Stops early, i.e.
+        - checks if we want early stopping and if the PPL of the validation set
+          has been detoriating
+        - deletes all checkpoints later than the best performing one.
+        - return True if we stopped early; False otherwise
+        """
+        early_stop = self.params.early_stopping
+        if (
+            early_stop > 0 and
+            np.argmin(valid_ppls) < len(valid_ppls) - early_stop
+        ):
+            checkpoint = tf.train.get_checkpoint_state(self.save_dir)
+            all_checkpoints = checkpoint.all_model_checkpoint_paths
+            tf.train.update_checkpoint_state(
+                self.save_dir, all_checkpoints[-early_stop - 1],
+                all_checkpoints[:-early_stop])
+            for checkpoint_to_delete in all_checkpoints[-early_stop:]:
+                for file_to_delete in glob.glob(checkpoint_to_delete + '*'):
+                    os.remove(file_to_delete)
+            print('Stopping training due to overfitting; deleted models ' +
+                  'after {}'.format(
+                      all_checkpoints[-early_stop - 1].rsplit('-', 1)[-1]))
+            return True
+        else:
+            return False
 
     def run_evaluation(self, test_text, gpu_memory=None):
         """Computes the perplexity of the test set."""
@@ -223,6 +248,7 @@ class CharacterLM(object):
             if checkpoint and checkpoint.model_checkpoint_path:
                 path = checkpoint.model_checkpoint_path
                 self.saver.restore(sess, path)
+                print('Restored', path)
 
                 batcher = Preprocessing([], self.params.max_length,
                                         self.params.batch_size)
@@ -295,10 +321,10 @@ def parse_arguments():
                         help='the default learning rate [0.02].')
     parser.add_argument('--gradient-clipping', '-g', type=float, default=None,
                         help='the limit for gradient clipping [None].')
-    parser.add_argument('--no-early-stopping', dest='early_stopping',
-                        action='store_false',
-                        help='do not stop when the validation set performance '
-                             'begins detoriating [False].')
+    parser.add_argument('--early-stopping', type=int, default=0,
+                        help='early stop after the perplexity has been '
+                             'detoriating after this many steps. If 0 (the '
+                             'default), do not do early stopping.')
     parser.add_argument('--gpu-memory', type=float, default=None,
                         help='limit on the GPU memory ratio [None].')
     args = parser.parse_args()
