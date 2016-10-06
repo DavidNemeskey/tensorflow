@@ -10,6 +10,8 @@ import glob
 import math
 import os
 import re
+import sys
+import time
 
 import numpy as np
 import tensorflow as tf
@@ -23,6 +25,7 @@ BATCH, TIME, VOCAB = range(3)
 class LSTMModel(object):
     """An LSTM language model."""
     def __init__(self, params, is_training):
+        self.params = params
         self.is_training = is_training
 
         """This creates the graph."""
@@ -62,14 +65,14 @@ class LSTMModel(object):
         """
         num_unrolled = self.params.num_unrolled
         self.sequence = tf.placeholder(
-            tf.float32, [None, num_unrolled, self.params.vocabulary])
+            self.params.data_type, [None, num_unrolled, self.params.vocabulary])
         data = tf.slice(self.sequence, (0, 0, 0), (-1, num_unrolled - 1, -1))
         target = tf.slice(self.sequence, (0, 1, 0), (-1, -1, -1))
         mask = tf.reduce_max(tf.abs(target), reduction_indices=VOCAB)
         length = tf.reduce_sum(mask, reduction_indices=TIME)  # so /batch
         return data, target, mask, length
 
-    def _forward(self, is_training):
+    def _forward(self):
         """
         The new part about the neural network code above is that we want to get
         both the prediction and the last recurrent activation. Previously, we
@@ -79,20 +82,32 @@ class LSTMModel(object):
         property that return the tuple of both tensors and prediction and state
         are just there to provide easy access from the outside.
         """
-        initial_state = cell.zero_state(self.params.batch_size,
-                                        self.params.data_type)
-        # TODO: embedding, optional
+        if self.params.embedding == 'yes':
+            with tf.device("/cpu:0"):
+                data = tf.argmax(self.data, VOCAB)
+                embedding = tf.get_variable(
+                    'embedding', [self.params.vocabulary, self.params.rnn_hidden],
+                    dtype=self.params.data_type)
+                self.inputs = tf.nn.embedding_lookup(embedding, data)
+        else:
+            self.inputs = self.data
 
         cell = tf.nn.rnn_cell.BasicLSTMCell(self.params.rnn_hidden,
                                             state_is_tuple=True)
-        # TODO: dropout, max norm. reg.
+        if self.is_training and self.params.keep_prob < 1:
+            cell = tf.nn.rnn_cell.DropoutWrapper(
+                cell, output_keep_prob=self.params.keep_prob)
+        # TODO: max norm. reg.
         if self.params.rnn_layers > 1:
             cell = tf.nn.rnn_cell.MultiRNNCell([cell] * self.params.rnn_layers,
                                                state_is_tuple=True)
+        initial_state = cell.zero_state(self.params.batch_size,
+                                        self.params.data_type)
 
+        print(self.inputs, self.data)
         hidden, state = tf.nn.dynamic_rnn(
-            inputs=self.data, cell=cell, dtype=tf.float32,
-            initial_state=self.initial, sequence_length=self.length)
+            inputs=self.inputs, cell=cell, dtype=self.params.data_type,
+            initial_state=initial_state, sequence_length=self.length)
         vocabulary_size = int(self.target.get_shape()[2])
         prediction = self._shared_softmax(hidden, vocabulary_size)
         return initial_state, prediction, state
@@ -105,7 +120,7 @@ class LSTMModel(object):
         weight = tf.get_variable(
             'softmax_w', [in_size, out_size], dtype=self.params.data_type,
             initializer=tf.truncated_normal_initializer(
-                stddev=1 / tf.sqrt(in_size), dtype=self.params.data_type))
+                stddev=1 / math.sqrt(in_size), dtype=self.params.data_type))
         bias = tf.get_variable(
             'softmax_b', shape=[out_size], dtype=self.params.data_type,
             initializer=tf.constant_initializer(0.1, dtype=self.params.data_type))
@@ -279,43 +294,82 @@ class LSTMModel(object):
         return 2 ** -(sum(logprobs) / len(logprobs))
 
 
-def init_or_load_session(sess, save_dir):
+def init_or_load_session(sess, save_dir, saver, init):
     """Initiates or loads a session."""
     checkpoint = tf.train.get_checkpoint_state(save_dir)
     if checkpoint and checkpoint.model_checkpoint_path:
         path = checkpoint.model_checkpoint_path
         print('Load checkpoint', path)
-        self.saver.restore(sess, path)
+        saver.restore(sess, path)
         epoch = int(re.search(r'-(\d+)$', path).group(1)) + 1
     else:
         if not os.path.isdir(save_dir):
             os.makedirs(save_dir)
         print('Randomly initialize variables')
-        sess.run(tf.initialize_all_variables())
+        sess.run(init)
         epoch = 1
     return epoch
 
 
-def run_epoch(session, model, epoch_size):
+def run_epoch(session, model, epoch_size, data_iter):
     """Runs an epoch on the network."""
+    start_time = time.time()
     state = session.run(model.initial_state)  # Is this required with forget=1?
     fetches = {
-        'loss': model.loss,
-        'final_state', model.state
+        'logprob': model.logprob,
+        'final_state': model.state
     }
+    # For training models, optimization is the main goal; PPL is just fluff
     if model.is_training:
         fetches['optimize'] = model.optimize
 
-    for _ in range(epoch_size):
-        feed_dict = {}
+    logprobs = []
+    for _ in range(epoch_size if not epoch_size > 0 else sys.maxsize):
+        # Break if there is no more data -- useful for consume_all
+        batch = next(data_iter, None)
+        if batch is None:
+            break
+
+        feed_dict = {model.sequence: batch}
         for i, (c, h) in enumerate(model.initial_state):
             feed_dict[c] = state[i].c  # CEC for layer i
             feed_dict[h] = state[i].h  # hidden for layer i
 
-    vals = session.run(fetches, feed_dict)
-    cost = vals["loss"]
-    state = vals["final_state"]
+        vals = session.run(fetches, feed_dict)
+        state = vals['final_state']
+        logprobs.append(vals['logprob'])
 
+    # TODO I am pretty sure the perplexity model built in is not correct...
+    end_time = time.time()
+    perplexity = 2 ** -(sum(logprobs) / len(logprobs))
+    return perplexity, end_time - start_time
+
+def stop_early(early_stop, valid_ppls, save_dir):
+    """
+    Stops early, i.e.
+    - checks if we want early stopping and if the PPL of the validation set
+      has been detoriating
+    - deletes all checkpoints later than the best performing one.
+    - return True if we stopped early; False otherwise
+    """
+    if (
+        early_stop > 0 and
+        np.argmin(valid_ppls) < len(valid_ppls) - early_stop
+    ):
+        checkpoint = tf.train.get_checkpoint_state(save_dir)
+        all_checkpoints = checkpoint.all_model_checkpoint_paths
+        tf.train.update_checkpoint_state(
+            save_dir, all_checkpoints[-early_stop - 1],
+            all_checkpoints[:-early_stop])
+        for checkpoint_to_delete in all_checkpoints[-early_stop:]:
+            for file_to_delete in glob.glob(checkpoint_to_delete + '*'):
+                os.remove(file_to_delete)
+        print('Stopping training due to overfitting; deleted models ' +
+              'after {}'.format(
+                  all_checkpoints[-early_stop - 1].rsplit('-', 1)[-1]))
+        return True
+    else:
+        return False
 
 
 def parse_arguments():
@@ -336,12 +390,17 @@ def parse_arguments():
     #                     help='unroll the RNN for how many steps [10].')
     parser.add_argument('--num-nodes', '-n', type=int, default=200,
                         help='use how many RNN cells [200].')
-    parser.add_argument('--window-size', '-w', type=int, default=50,
-                        help='the text window size [50].')
+    parser.add_argument('--num-unrolled', '-w', type=int, default=20,
+                        help='how many steps to unroll the network for [20].')
     parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
                         default='lstm', help='the RNN cell to use [lstm].')
     parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
+    parser.add_argument('--dropout', '-d', type=float, default=None,
+                        help='the keep probability of dropout; if not ' +
+                             'specified, no dropout is applied.')
+    parser.add_argument('--embedding', '-E', choices={'no', 'yes'}, default='yes',
+                        help='whether to compute an embedding as well [yes].')
     parser.add_argument('--epochs', '-e', type=int, default=20,
                         help='the default number of epochs [20].')
     parser.add_argument('--epoch-size', '-s', type=int, default=200,
@@ -375,23 +434,22 @@ def main():
     args = parse_arguments()
 
     train_reader = file_reader(args.train_file, args.vocab_file,
-                               args.batch_size, args.window_size)
+                               args.batch_size, args.num_unrolled)
     valid_reader = file_reader(args.valid_file, args.vocab_file,
-                               args.batch_size, args.window_size, True)
+                               args.batch_size, args.num_unrolled, True)
     test_reader = file_reader(args.test_file, args.vocab_file,
-                              args.batch_size, args.window_size, True)
+                              args.batch_size, args.num_unrolled, True)
 
     params = AttrDict(
         rnn_hidden=args.num_nodes,
         rnn_layers=args.layers,
         batch_size=args.batch_size,
-        num_unrolled=args.window_size,
+        num_unrolled=args.num_unrolled,
+        keep_prob=args.dropout,
         vocabulary=len(train_reader.vocab_map),
         learning_rate=args.learning_rate,
         gradient_clipping=args.gradient_clipping,
-        epochs=args.epochs,
-        epoch_size=args.epoch_size,
-        early_stopping=args.early_stopping,
+        embedding=args.embedding,
         data_type=tf.float32
     )
     eval_params = AttrDict(params)
@@ -400,7 +458,7 @@ def main():
 
     # Model definition
     with tf.Graph().as_default() as graph:
-        init_scale = 1 / math.sqrt(args.rnn_hidden)
+        init_scale = 1 / math.sqrt(args.num_nodes)
         initializer = tf.random_uniform_initializer(-init_scale, init_scale)
 
         with tf.name_scope('Train'):
@@ -412,20 +470,33 @@ def main():
         with tf.name_scope('Test'):
             with tf.variable_scope("Model", reuse=True, initializer=initializer):
                 mtest = LSTMModel(eval_params, is_training=False)
+        with tf.name_scope('Global_ops'):
+            saver = tf.train.Saver(name='saver', max_to_keep=10)
+            init = tf.initialize_all_variables()
 
+    # TODO: look into Supervisor
     # The training itself
     with tf.Session(graph=graph, config=_get_sconfig(args.gpu_memory)) as sess:
         # Load the model, or initialize it anew
         save_dir = os.path.join('saves', args.model_name)
-        self.saver = tf.train.Saver(name='saver')
-        last_epoch = init_or_load_session(sess, save_dir, saver)
+        last_epoch = init_or_load_session(sess, save_dir, saver, init)
 
-        for i in range(last_epoch, args.epochs + 1):
-            train_perplexity = run_epoch
+        valid_ppls = []
+        train_iter = iter(train_reader)
+        for epoch in range(last_epoch, args.epochs + 1):
+            train_ppl = run_epoch(sess, mtrain, args.epoch_size, train_iter)
+            valid_ppl = run_epoch(sess, mvalid, 0, iter(valid_reader))
+            print('Epoch {:2d} train PPL {:7.3f} valid PPL {:7.3f}'.format(
+                epoch, train_ppl, valid_ppl))
+            saver.save(sess, os.path.join(save_dir, 'model'), epoch)
 
-    # TODO: look into Supervisor
-    lm.run_training(train_reader, valid_reader, args.gpu_memory)
-    lm.run_evaluation(test_reader, args.gpu_memory)
+            valid_ppls.append(valid_ppl)
+            # Check for overfitting
+            if stop_early(args.early_stopping, valid_ppls, save_dir):
+                break
+
+        test_ppl = run_epoch(sess, mtest, 0, iter(test_reader))
+        print('Test perplexity: {:.3f}'.format(test_ppl))
 
 
 if __name__ == '__main__':
