@@ -63,7 +63,7 @@ class LSTMModel(object):
         """
         num_unrolled = self.params.num_unrolled
         self.sequence = tf.placeholder(
-            tf.float32, [None, num_unrolled, self.params.vocabulary])
+            self.params.data_type, [None, num_unrolled, self.params.vocabulary])
         data = tf.slice(self.sequence, (0, 0, 0), (-1, num_unrolled - 1, -1))
         target = tf.slice(self.sequence, (0, 1, 0), (-1, -1, -1))
         mask = tf.reduce_max(tf.abs(target), reduction_indices=VOCAB)
@@ -80,11 +80,28 @@ class LSTMModel(object):
         property that return the tuple of both tensors and prediction and state
         are just there to provide easy access from the outside.
         """
-        cell = tf.nn.rnn_cell.BasicLSTMCell(self.params.rnn_hidden, state_is_tuple=True)
+        if self.params.embedding == 'yes':
+            with tf.device("/cpu:0"):
+                data = tf.argmax(self.data, VOCAB)
+                embedding = tf.get_variable(
+                    'embedding', [self.params.vocabulary, self.params.rnn_hidden],
+                    dtype=self.params.data_type)
+                self.inputs = tf.nn.embedding_lookup(embedding, data)
+        else:
+            self.inputs = self.data
+
+        cell = tf.nn.rnn_cell.BasicLSTMCell(self.params.rnn_hidden,
+                                            state_is_tuple=True)
+        if self.is_training and self.params.keep_prob < 1:
+            cell = tf.nn.rnn_cell.DropoutWrapper(
+                cell, output_keep_prob=self.params.keep_prob)
+        # TODO: max norm. reg.
         if self.params.rnn_layers > 1:
-            cell = tf.nn.rnn_cell.MultiRNNCell([cell] * self.params.rnn_layers, state_is_tuple=True)
+            cell = tf.nn.rnn_cell.MultiRNNCell([cell] * self.params.rnn_layers,
+                                               state_is_tuple=True)
+
         hidden, state = tf.nn.dynamic_rnn(
-            inputs=self.data, cell=cell, dtype=tf.float32,
+            inputs=self.inputs, cell=cell, dtype=self.params.data_type,
             initial_state=self.initial, sequence_length=self.length)
         vocabulary_size = int(self.target.get_shape()[2])
         prediction = self._shared_softmax(hidden, vocabulary_size)
@@ -95,11 +112,12 @@ class LSTMModel(object):
         num_unrolled = int(data.get_shape()[1])  # time-steps
         in_size = int(data.get_shape()[2])     # vocabulary size
         weight = tf.get_variable(
-            'softmax_w', [in_size, out_size],
+            'softmax_w', [in_size, out_size], dtype=self.params.data_type,
             initializer=tf.truncated_normal_initializer(
-                stddev=0.01), dtype=tf.float32)
-        bias = tf.get_variable('softmax_b', shape=[out_size], dtype=tf.float32,
-                               initializer=tf.constant_initializer(0.1))
+                stddev=0.01))
+        bias = tf.get_variable(
+            'softmax_b', shape=[out_size], dtype=self.params.data_type,
+            initializer=tf.constant_initializer(0.1))
         # Flatten to apply same weights to all time steps.
         flat = tf.reshape(data, [-1, in_size])
         # Softmax just computes the values, doesn't choose the best, so we can
@@ -130,7 +148,7 @@ class LSTMModel(object):
         """This is basically invers accuracy."""
         error = tf.not_equal(
             tf.argmax(self.prediction, VOCAB), tf.argmax(self.target, VOCAB))
-        error = tf.cast(error, tf.float32)
+        error = tf.cast(error, self.params.data_type)
         return self._average(error)
 
     def _logprob(self):
@@ -221,12 +239,17 @@ def parse_arguments():
     #                     help='unroll the RNN for how many steps [10].')
     parser.add_argument('--num-nodes', '-n', type=int, default=200,
                         help='use how many RNN cells [200].')
-    parser.add_argument('--window-size', '-w', type=int, default=50,
-                        help='the text window size [50].')
+    parser.add_argument('--num-unrolled', '-w', type=int, default=20,
+                        help='how many steps to unroll the network for [20].')
     parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
                         default='lstm', help='the RNN cell to use [lstm].')
     parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
+    parser.add_argument('--dropout', '-d', type=float, default=None,
+                        help='the keep probability of dropout; if not ' +
+                             'specified, no dropout is applied.')
+    parser.add_argument('--embedding', '-E', choices={'no', 'yes'}, default='yes',
+                        help='whether to compute an embedding as well [yes].')
     parser.add_argument('--epochs', '-e', type=int, default=20,
                         help='the default number of epochs [20].')
     parser.add_argument('--epoch-size', '-s', type=int, default=200,
@@ -336,9 +359,9 @@ def main():
     args = parse_arguments()
 
     train_reader = file_reader(args.train_file, args.vocab_file,
-                               args.batch_size, args.window_size)
+                               args.batch_size, args.num_unrolled)
     valid_reader = file_reader(args.valid_file, args.vocab_file,
-                               args.batch_size, args.window_size, True)
+                               args.batch_size, args.num_unrolled, True)
     test_reader = file_reader(args.test_file, args.vocab_file,
                               1, 1, True)
 
@@ -346,10 +369,13 @@ def main():
         rnn_hidden=args.num_nodes,
         rnn_layers=args.layers,
         batch_size=args.batch_size,
-        num_unrolled=args.window_size,
+        num_unrolled=args.num_unrolled,
+        keep_prob=args.dropout,
         vocabulary=len(train_reader.vocab_map),
         learning_rate=args.learning_rate,
         gradient_clipping=args.gradient_clipping,
+        embedding=args.embedding,
+        data_type=tf.float32,
     )
     eval_params = AttrDict(params)
     eval_params.batch_size = 1
