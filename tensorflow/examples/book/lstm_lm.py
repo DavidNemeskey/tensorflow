@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-"""Character-based language modeling with RNN."""
+"""Generic language modeling with RNN."""
 
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
@@ -29,7 +29,7 @@ class LSTMModel(object):
 
         self.initial = None
         self.data, self.target, self.mask, self.length = self._data()
-        self.prediction, self.state = self._forward()
+        self.initial_state, self.prediction, self.state = self._forward()
         self.loss, self.error, self.logprob = \
             self._cost(), self._error(), self._logprob()
 
@@ -100,12 +100,15 @@ class LSTMModel(object):
             cell = tf.nn.rnn_cell.MultiRNNCell([cell] * self.params.rnn_layers,
                                                state_is_tuple=True)
 
+        initial_state = cell.zero_state(self.params.batch_size,
+                                        self.params.data_type)
+
         hidden, state = tf.nn.dynamic_rnn(
             inputs=self.inputs, cell=cell, dtype=self.params.data_type,
-            initial_state=self.initial, sequence_length=self.length)
+            initial_state=initial_state, sequence_length=self.length)
         vocabulary_size = int(self.target.get_shape()[2])
         prediction = self._shared_softmax(hidden, vocabulary_size)
-        return prediction, state
+        return initial_state, prediction, state
 
     def _shared_softmax(self, data, out_size):
         """Computes the shared softmax over all time-steps."""
@@ -114,7 +117,7 @@ class LSTMModel(object):
         weight = tf.get_variable(
             'softmax_w', [in_size, out_size], dtype=self.params.data_type,
             initializer=tf.truncated_normal_initializer(
-                stddev=0.01))
+                stddev=1 / math.sqrt(in_size)))
         bias = tf.get_variable(
             'softmax_b', shape=[out_size], dtype=self.params.data_type,
             initializer=tf.constant_initializer(0.1))
@@ -145,7 +148,7 @@ class LSTMModel(object):
         return self._average(cost)
 
     def _error(self):
-        """This is basically invers accuracy."""
+        """This is basically inverse accuracy."""
         error = tf.not_equal(
             tf.argmax(self.prediction, VOCAB), tf.argmax(self.target, VOCAB))
         error = tf.cast(error, self.params.data_type)
@@ -193,32 +196,16 @@ class LSTMModel(object):
         data = tf.reduce_sum(data, reduction_indices=TIME) / length
         return tf.reduce_mean(data)  # The avg. data / batch
 
-    def _optimization(self, batch, sess):
-        """Runs the optimization."""
-        logprob, _ = sess.run((self.logprob, self.optimize),
-                              {self.sequence: batch})
-        if np.isnan(logprob):
-            raise Exception('training diverged')
-        return logprob
 
-    def _iter_perplexity(self, sess, file_reader):
-        """
-        I am pretty sure this isn't correct (because of the last, incomplete
-        set of batches -- but I am not even sure the _average is correct at
-        this point...
-        """
-        ppls = [self._perplexity(sess, batches=batches)
-                for batches in file_reader]
-        return np.mean(ppls)
-
-    def _perplexity(self, sess, batches=None, logprobs=None):
-        if logprobs is None:
-            logprobs = [
-                sess.run(self.logprob,
-                         {self.sequence: batches[b:b + self.params.batch_size]})
-                for b in range(0, len(batches), self.params.batch_size)
-            ]
-        return 2 ** -(sum(logprobs) / len(logprobs))
+def _get_sconfig(gpu_memory):
+    """
+    Returns a session configuration object that sets the GPU memory limit.
+    """
+    if gpu_memory:
+        return tf.ConfigProto(gpu_options=tf.GPUOptions(
+            per_process_gpu_memory_fraction=gpu_memory))
+    else:
+        return None
 
 
 def parse_arguments():
@@ -270,17 +257,18 @@ def parse_arguments():
     return args
 
 
-def _get_sconfig(gpu_memory):
-    if gpu_memory:
-        return tf.ConfigProto(gpu_options=tf.GPUOptions(
-            per_process_gpu_memory_fraction=gpu_memory))
-    else:
-        return None
-
-
 def run_epoch(sess, model, epoch_size, data_iter):
     """Runs an epoch on the network."""
     start_time = time.time()
+    state = sess.run(model.initial_state)
+
+    fetches = {
+        'logprob': model.logprob,
+        'final_state': model.state,
+    }
+    if model.is_training:
+        fetches['optimize'] = model.optimize
+
     logprobs = []
     for _ in range(epoch_size if epoch_size > 0 else sys.maxsize):
         batch = next(data_iter, None)
@@ -288,26 +276,17 @@ def run_epoch(sess, model, epoch_size, data_iter):
             break
 
         feed_dict = {model.sequence: batch}
-        fetches = {'logprob': model.logprob}
-        if model.is_training:
-            fetches['optimize'] = model.optimize
+        for i, (c, h) in enumerate(model.initial_state):
+            feed_dict[c] = state[i].c  # CEC for layer i
+            feed_dict[h] = state[i].h  # hidden for layer i
 
         vals = sess.run(fetches, feed_dict)
+        state = vals['final_state']
         logprobs.append(vals['logprob'])
 
     end_time = time.time()
     perplexity = 2 ** -(sum(logprobs) / len(logprobs))
     return perplexity, end_time - start_time
-
-
-def run_epoch_old(sess, mtrain, mvalid, train_iter, valid_reader, epoch_size):
-    logprobs = []
-    for _ in range(epoch_size):
-        logprobs.append(mtrain._optimization(next(train_iter), sess))
-
-    train_ppl = mtrain._perplexity(sess, logprobs=logprobs)
-    valid_ppl = mvalid._iter_perplexity(sess, valid_reader)
-    return train_ppl, valid_ppl
 
 
 def _stop_early(valid_ppls, early_stop, save_dir):
@@ -394,10 +373,12 @@ def main():
         with tf.name_scope('Test'):
             with tf.variable_scope("Model", reuse=True, initializer=initializer):
                 mtest = LSTMModel(eval_params, is_training=False)
-        with tf.name_scope('global_ops'):
-            saver = tf.train.Saver(name='saver')
+        with tf.name_scope('Global_ops'):
+            saver = tf.train.Saver(name='saver', max_to_keep=10)
             init = tf.initialize_all_variables()
 
+    # TODO: look into Supervisor
+    # The training itself
     with tf.Session(graph=graph, config=_get_sconfig(args.gpu_memory)) as sess:
         save_dir = os.path.join('saves', args.model_name)
         last_epoch = init_or_load_session(sess, save_dir, saver, init)
