@@ -35,16 +35,27 @@ class StreamFileReader(FileReader):
     """Reads a file."""
     def __init__(self, filename, vocab_map_file, batch_size, num_steps):
         super().__init__(filename, vocab_map_file, batch_size, num_steps)
+        self.tokens = []
+        self.len_needed = self.batch_size * self.num_steps
 
     def __iter__(self):
-        windows = []
-        len_needed = self.batch_size * self.num_steps
         while True:
-            with openall(self.filename) as inf:
-                while len(windows) < len_needed:
-                    windows.extend(inf.readline().strip().split() + ['</s>'])
-                yield self._convert(windows[:len_needed])
-                windows = windows[len_needed:]
+            for _ in self._file_iterator(self.filename, True):
+                if len(self.tokens) > 0:
+                    yield self._convert(self.tokens[:self.len_needed])
+                    self.tokens = self.tokens[min(self.len_needed, len(self.tokens)):]
+
+    def _file_iterator(self, fn, dont_stop=False):
+        while True:
+            with openall(fn) as inf:
+                for line in inf:
+                    if len(self.tokens) < self.len_needed:
+                        self.tokens.extend(line.strip().split() + ['</s>'])
+                    else:
+                        yield
+                if dont_stop:
+                    yield
+                    break
 
 
 class InMemoryFileReader(FileReader):
