@@ -89,6 +89,8 @@ class LSTMModel(object):
                 self.inputs = tf.nn.embedding_lookup(embedding, data)
         else:
             self.inputs = self.data
+        if self.is_training and self.params.keep_prob < 1:
+            self.inputs = tf.nn.dropout(self.inputs, self.params.keep_prob)
 
         cell = tf.nn.rnn_cell.BasicLSTMCell(self.params.rnn_hidden,
                                             state_is_tuple=True)
@@ -113,7 +115,7 @@ class LSTMModel(object):
     def _shared_softmax(self, data, out_size):
         """Computes the shared softmax over all time-steps."""
         num_unrolled = int(data.get_shape()[1])  # time-steps
-        in_size = int(data.get_shape()[2])     # vocabulary size
+        in_size = int(data.get_shape()[2])     # (batch x time - 1 x >hidden<)
         weight = tf.get_variable(
             'softmax_w', [in_size, out_size], dtype=self.params.data_type,
             initializer=tf.truncated_normal_initializer(
