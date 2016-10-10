@@ -179,6 +179,7 @@ def get_params(args):
     else:
         raise ValueError("Invalid model: %s", args.model)
     params.data_type = tf.float16 if args.fp16 else tf.float32
+    params.embedding = 'yes'
     return params
 
 

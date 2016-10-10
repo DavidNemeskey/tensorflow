@@ -17,9 +17,18 @@ class LSTMModel(object):
             self._train_op = tf.no_op()
 
     def _data(self):
-        """Creates the placeholders & so."""
-        self._input_data = tf.placeholder(tf.int32, [self.params.batch_size, self.params.num_steps])
-        self._targets = tf.placeholder(tf.int32, [self.params.batch_size, self.params.num_steps])
+        """
+        Creates the input placeholders. If using an embedding, the input is
+        a single number per token; if not, it must be one-hot encoded.
+        """
+        dims = [self.params.batch_size, self.params.num_steps]
+        if self.params.embedding != 'no':
+            self._input_data = tf.placeholder(tf.int32, dims)
+            self._targets = tf.placeholder(tf.int32, dims)
+        else:
+            dims += [self.params.vocab_size]
+            self._input_data = tf.placeholder(self.params.data_type, dims)
+            self._targets = tf.placeholder(self.params.data_type, dims)
 
     def _build_network(self):
         # Slightly better results can be obtained with forget gate biases
@@ -36,11 +45,14 @@ class LSTMModel(object):
         self._initial_state = cell.zero_state(self.params.batch_size,
                                               dtype=self.params.data_type)
 
-        with tf.device("/cpu:0"):
-            embedding = tf.get_variable(
-                "embedding", [self.params.vocab_size, self.params.hidden_size],
-                dtype=self.params.data_type)
-            inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+        if self.params.embedding == 'yes':
+            with tf.device("/cpu:0"):
+                embedding = tf.get_variable(
+                    'embedding', [self.params.vocab_size, self.params.hidden_size],
+                    dtype=self.params.data_type)
+                inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+        else:
+            inputs = self._input_data
 
         if self.is_training and self.params.keep_prob < 1:
             inputs = tf.nn.dropout(inputs, self.params.keep_prob)
