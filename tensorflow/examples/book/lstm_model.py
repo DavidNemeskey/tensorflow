@@ -106,8 +106,9 @@ class LSTMModel(object):
     def _optimize(self):
         self._lr = tf.Variable(0.0, trainable=False)
         tvars = tf.trainable_variables()
-        grads, _ = tf.clip_by_global_norm(tf.gradients(self.cost, tvars),
-                                          self.params.max_grad_norm)
+        grads = tf.gradients(self.cost, tvars)
+        if self.params.max_grad_norm:
+            grads, _ = tf.clip_by_global_norm(grads, self.params.max_grad_norm)
         optimizer = tf.train.GradientDescentOptimizer(self._lr)
         self._train_op = optimizer.apply_gradients(zip(grads, tvars))
 
