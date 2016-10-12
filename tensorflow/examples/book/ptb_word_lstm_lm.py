@@ -142,7 +142,7 @@ def run_epoch(session, model, data, verbose=False):
     start_time = time.time()
     costs = 0.0
     iters = 0
-    state = model.initial_state.eval()
+    state = model.initial_state.eval(session=session)
 
     fetches = [model.cost, model.final_state, model.train_op]
 
@@ -289,7 +289,8 @@ def main():
             with tf.variable_scope("model", reuse=True, initializer=initializer):
                 mtest = LSTMModel(is_training=False, params=eval_params)
         with tf.name_scope('Global_ops'):
-            saver = tf.train.Saver(name='saver', max_to_keep=10)
+            saver = tf.train.Saver(
+                name='saver', max_to_keep=max(10, args.early_stopping + 1))
             init = tf.initialize_all_variables()
 
     # TODO: look into Supervisor
