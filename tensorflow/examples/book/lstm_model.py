@@ -3,7 +3,7 @@ import tensorflow as tf
 
 class LSTMModel(object):
     """Generic LSTM language model based on the PTB model in tf/models."""
-    def __init__(self, is_training, params):
+    def __init__(self, params, is_training):
         self.is_training = is_training
         self.params = params
 

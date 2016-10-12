@@ -7,17 +7,15 @@ from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
 from builtins import range
 import glob
-import math
 import os
 import re
-import sys
 import time
 
 import numpy as np
 import tensorflow as tf
 
 from auxiliary import AttrDict
-from file_reader import file_reader
+from cut_lm_input import DataLoader
 from lstm_model import LSTMModel
 
 
@@ -40,8 +38,6 @@ def parse_arguments():
                         help='the text file to use as a validation set.')
     parser.add_argument('test_file',
                         help='the text file to use as a test set.')
-    parser.add_argument('vocab_file',
-                        help='the vocabulary list common to all sets.')
     parser.add_argument('--model-name', '-m', default='RNN CLM',
                         help='the name of the model [RNN CLM].')
     parser.add_argument('--batch-size', '-b', type=int, default=100,
@@ -50,70 +46,94 @@ def parse_arguments():
     #                     help='unroll the RNN for how many steps [10].')
     parser.add_argument('--num-nodes', '-n', type=int, default=200,
                         help='use how many RNN cells [200].')
-    parser.add_argument('--num-unrolled', '-w', type=int, default=20,
+    parser.add_argument('--num-steps', '-w', type=int, default=20,
                         help='how many steps to unroll the network for [20].')
     parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
                         default='lstm', help='the RNN cell to use [lstm].')
     parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
-    parser.add_argument('--dropout', '-d', type=float, default=None,
+    parser.add_argument('--dropout', '-D', type=float, default=1.0,
                         help='the keep probability of dropout; if not ' +
                              'specified, no dropout is applied.')
     parser.add_argument('--embedding', '-E', choices={'no', 'yes'}, default='yes',
                         help='whether to compute an embedding as well [yes].')
     parser.add_argument('--epochs', '-e', type=int, default=20,
                         help='the default number of epochs [20].')
-    parser.add_argument('--epoch-size', '-s', type=int, default=200,
-                        help='the default epoch size [200]. The number of '
-                             'batches processed in an epoch.')
+    parser.add_argument('--epoch-size', '-s', type=int, default=0,
+                        help='the default epoch size. The number of batches '
+                             'processed in an epoch. If 0 (the default), '
+                             'the whole data is processed in an apoch.')
     parser.add_argument('--learning-rate', '-l', type=float, default=0.02,
                         help='the default learning rate [0.02].')
+    parser.add_argument('--lr-decay', '-d', type=float, default=0.5,
+                        help='the learning rate decay [0.5].')
+    parser.add_argument('--decay-delay', type=float, default=None,
+                        help='keep the learning rate constant for this many '
+                             'epochs [learning_rate // 4 + 1].')
+    parser.add_argument('--init-scale', '-i', type=float, default=0.1,
+                        help='the initial scale of the weights [0.1].')
     parser.add_argument('--max-grad-norm', '-g', type=float, default=None,
                         help='the limit for gradient clipping [None].')
     parser.add_argument('--early-stopping', type=int, default=0,
                         help='early stop after the perplexity has been '
                              'detoriating after this many steps. If 0 (the '
                              'default), do not stop early.')
+    parser.add_argument('--test-only', '-T', action='store_true',
+                        help='do not train, only run the evaluation. Not '
+                             'really meaningful if there are no checkpoints.')
     parser.add_argument('--gpu-memory', type=float, default=None,
                         help='limit on the GPU memory ratio [None].')
     args = parser.parse_args()
 
+    if args.decay_delay is None:
+        args.decay_delay = args.epochs // 4 + 1
+
     return args
 
 
-def run_epoch(sess, model, epoch_size, data_iter):
-    """Runs an epoch on the network."""
+def run_epoch(session, model, data, epoch_size=0, verbose=False):
+    """
+    Runs an epoch on the network.
+    - epoch_size: if 0, it is taken from data
+    - data: a DataLoader instance
+    """
+    # TODO: these two should work together better, i.e. keep the previous
+    #       iteration state intact if epoch_size != 0; also loop around
+    epoch_size = data.epoch_size if epoch_size <= 0 else epoch_size
+    data_iter = iter(data)
     start_time = time.time()
-    state = sess.run(model.initial_state)
+    costs = 0.0
+    iters = 0
+    state = model.initial_state.eval(session=session)
 
-    fetches = {
-        'logprob': model.logprob,
-        'final_state': model.state,
-    }
-    if model.is_training:
-        fetches['optimize'] = model.optimize
+    fetches = [model.cost, model.final_state, model.train_op]
 
-    logprobs = []
-    for _ in range(epoch_size if epoch_size > 0 else sys.maxsize):
-        batch = next(data_iter, None)
-        if batch is None:
-            break
+    for step in range(epoch_size):
+        x, y = next(data_iter)
 
-        feed_dict = {model.sequence: batch}
-        for i, (c, h) in enumerate(model.initial_state):
-            feed_dict[c] = state[i].c  # CEC for layer i
-            feed_dict[h] = state[i].h  # hidden for layer i
+        # feed_dict = {model.sequence: batch}
+        # for i, (c, h) in enumerate(model.initial_state):
+        #     feed_dict[c] = state[i].c  # CEC for layer i
+        #     feed_dict[h] = state[i].h  # hidden for layer i
+        feed_dict = {
+            model.input_data: x,
+            model.targets: y,
+            model.initial_state: state
+        }
 
-        vals = sess.run(fetches, feed_dict)
-        state = vals['final_state']
-        logprobs.append(vals['logprob'])
-
+        cost, state, _ = session.run(fetches, feed_dict)
+        costs += cost
+        iters += model.params.num_steps
+        if verbose and step % (epoch_size // 10) == 10:
+            print("%.3f perplexity: %.3f speed: %.0f wps" %
+                  (step * 1.0 / epoch_size, np.exp(costs / iters),
+                   iters * model.params.batch_size / (time.time() - start_time)))
     end_time = time.time()
-    perplexity = 2 ** -(sum(logprobs) / len(logprobs))
-    return perplexity, end_time - start_time
+
+    return np.exp(costs / iters), end_time - start_time
 
 
-def _stop_early(valid_ppls, early_stop, save_dir):
+def stop_early(valid_ppls, early_stop, save_dir):
     """
     Stops early, i.e.
     - checks if we want early stopping and if the PPL of the validation set
@@ -161,32 +181,34 @@ def init_or_load_session(sess, save_dir, saver, init):
 def main():
     args = parse_arguments()
 
-    train_reader = file_reader(args.train_file, args.vocab_file,
-                               args.batch_size, args.num_unrolled)
-    valid_reader = file_reader(args.valid_file, args.vocab_file,
-                               args.batch_size, args.num_unrolled, True)
-    test_reader = file_reader(args.test_file, args.vocab_file,
-                              1, 1, True)
+    train_data = DataLoader(args.train_file, args.batch_size, args.num_steps,
+                            one_hot=not args.embedding)
+    valid_data = DataLoader(args.valid_file, args.batch_size, args.num_steps,
+                            one_hot=not args.embedding, vocab=train_data.vocab)
+    test_data = DataLoader(args.test_file, 1, 1, one_hot=not args.embedding,
+                           vocab=train_data.vocab)
 
     params = AttrDict(
-        rnn_hidden=args.num_nodes,
-        rnn_layers=args.layers,
+        hidden_size=args.num_nodes,
+        num_layers=args.layers,
         batch_size=args.batch_size,
-        num_unrolled=args.num_unrolled,
+        num_steps=args.num_steps,
         keep_prob=args.dropout,
-        vocabulary=len(train_reader.vocab_map),
+        vocab_size=len(train_data.vocab),
         learning_rate=args.learning_rate,
-        gradient_clipping=args.gradient_clipping,
+        max_grad_norm=args.max_grad_norm,
         embedding=args.embedding,
+        lr_decay=args.lr_decay,
         data_type=tf.float32,
     )
     eval_params = AttrDict(params)
     eval_params.batch_size = 1
-    eval_params.num_unrolled = 1
+    eval_params.num_steps = 1
 
     with tf.Graph().as_default() as graph:
-        init_scale = 1 / math.sqrt(args.num_nodes)
-        initializer = tf.random_uniform_initializer(-init_scale, init_scale)
+        # init_scale = 1 / math.sqrt(args.num_nodes)
+        initializer = tf.random_uniform_initializer(
+            -args.init_scale, args.init_scale)
 
         with tf.name_scope('Train'):
             with tf.variable_scope("Model", reuse=None, initializer=initializer):
@@ -198,7 +220,8 @@ def main():
             with tf.variable_scope("Model", reuse=True, initializer=initializer):
                 mtest = LSTMModel(eval_params, is_training=False)
         with tf.name_scope('Global_ops'):
-            saver = tf.train.Saver(name='saver', max_to_keep=10)
+            saver = tf.train.Saver(
+                name='saver', max_to_keep=max(10, args.early_stopping + 1))
             init = tf.initialize_all_variables()
 
     # TODO: look into Supervisor
@@ -206,25 +229,30 @@ def main():
     with tf.Session(graph=graph, config=get_sconfig(args.gpu_memory)) as sess:
         save_dir = os.path.join('saves', args.model_name)
         last_epoch = init_or_load_session(sess, save_dir, saver, init)
-        print('Epoch {:2d}-                 valid PPL {:6.3f}'.format(
-            last_epoch, run_epoch(sess, mvalid, 0, iter(valid_reader))[0]))
+        if not args.test_only:
+            print('Epoch {:2d}-                 valid PPL {:6.3f}'.format(
+                last_epoch, run_epoch(sess, mvalid, valid_data, 0)[0]))
 
-        valid_ppls = []
-        train_iter = iter(train_reader)
-        for epoch in range(last_epoch, args.epochs + 1):
-            train_ppl, _ = run_epoch(sess, mtrain, args.epoch_size, train_iter)
-            valid_ppl, _ = run_epoch(sess, mvalid, 0, iter(valid_reader))
-            print('Epoch {:2d} train PPL {:6.3f} valid PPL {:6.3f}'.format(
-                epoch, train_ppl, valid_ppl))
-            saver.save(sess, os.path.join(save_dir, 'model'), epoch)
+            valid_ppls = []
+            for epoch in range(last_epoch, args.epochs + 1):
+                lr_decay = args.lr_decay ** max(epoch - args.decay_delay, 0.0)
+                mtrain.assign_lr(sess, args.learning_rate * lr_decay)
 
-            valid_ppls.append(valid_ppl)
-            # Check for overfitting
-            if _stop_early(valid_ppls, args.early_stopping, save_dir):
-                break
+                train_perplexity, _ = run_epoch(sess, mtrain, train_data, 0,
+                                                verbose=True)
+                valid_perplexity, _ = run_epoch(sess, mvalid, valid_data)
+                print('Epoch {:2d} train PPL {:6.3f} valid PPL {:6.3f}'.format(
+                    epoch, train_perplexity, valid_perplexity))
+                saver.save(sess, os.path.join(save_dir, 'model'), epoch)
 
-        test_ppl, _ = run_epoch(sess, mtest, 0, iter(test_reader))
-        print('Test perplexity: {:.3f}'.format(test_ppl))
+                valid_ppls.append(valid_perplexity)
+                # Check for overfitting
+                if stop_early(valid_ppls, args.early_stopping, save_dir):
+                    break
+
+        print('Running evaluation...')
+        test_perplexity, _ = run_epoch(sess, mtest, test_data)
+        print('Test perplexity: {:.3f}'.format(test_perplexity))
 
 
 if __name__ == '__main__':

@@ -85,7 +85,7 @@ def print_vocab(vocab, vocab_file):
 class DataLoader(object):
     """Loads the data written by this script."""
     def __init__(self, header, batch_size, num_steps, one_hot=False,
-                 data_type=np.int32):
+                 data_type=np.int32, vocab=None):
         self.header = header
         self.batch_size = batch_size
         self.num_steps = num_steps
@@ -93,32 +93,38 @@ class DataLoader(object):
         self.data_type = data_type
         data_batches, self.data_len = self._read_header()
         self.queues = self._setup_queues(data_batches)
-        self.vocab = self._read_vocab()
+        self.vocab = self._read_vocab() if not vocab else vocab
         self.epoch_size = (
-            self.data_len // data_batches * len(self.queues[0]) // num_steps)
+            ((self.data_len // data_batches - 1) // num_steps) *
+            len(self.queues[0])
+        )  # -1 because targets are shifted right by 1 step
 
     def __iter__(self):
         for q_step in range(len(self.queues[0])):
             infs = [openall(self.queues[i][q_step]) for i in range(self.batch_size)]
+            arr = np.zeros((self.batch_size, self.num_steps + 1),
+                           dtype=self.data_type)
+            arr[:, -1:] = np.array(self._read_from_infs(infs, 1))
             for i in range(self.epoch_size):
-                arr = np.array(list(map(self._read_num_steps, infs)),
-                               dtype=self.data_type)
+                arr[:, 0] = arr[:, -1]
+                arr[:, 1:] = np.array(
+                    self._read_from_infs(infs, self.num_steps))
                 if self.one_hot:
                     ret = np.zeros((self.batch_size, self.num_steps, len(self.vocab)),
                                    dtype=self.data_type)
                     ret[list(np.indices(ret.shape[:-1])) + [arr]] = 1
-                    #for i in range(ret.shape[0]):
-                    #    for j in range(ret.shape[1]):
-                    #        ret[i, j, arr[i, j]] = 1
+                    # for i in range(ret.shape[0]):
+                    #     for j in range(ret.shape[1]):
+                    #         ret[i, j, arr[i, j]] = 1
                 else:
                     ret = arr
-                yield ret
+                yield ret[:, :self.num_steps], ret[:, 1:]
             for inf in infs:
                 inf.close()
 
-    def _read_num_steps(self, inf):
-        return [self.vocab[inf.readline().strip()]
-                for _ in range(self.num_steps)]
+    def _read_from_infs(self, infs, num_tokens):
+        return [[self.vocab[inf.readline().strip()] for _ in range(num_tokens)]
+                for inf in infs]
 
     def _setup_queues(self, data_batches):
         div, mod = divmod(data_batches, self.batch_size)
