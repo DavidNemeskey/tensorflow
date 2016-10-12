@@ -11,6 +11,7 @@ from argparse import ArgumentParser
 from builtins import range
 from collections import Counter
 import math
+import os
 import subprocess
 import sys
 
@@ -28,7 +29,28 @@ def parse_arguments():
                         help='the training batch size [100].')
     parser.add_argument('--output-prefix', '-o', required=True,
                         help='the prefix of the output files\' names.')
+    parser.add_argument('--vocab-file', '-v', default=None,
+                        help='if specified, the vocabulary file here is '
+                             'reused in favor of a dataset-specific file.')
     return parser.parse_args()
+
+
+def read_vocab(vocab_file):
+    if os.path.isfile(vocab_file):
+        with openall(vocab_file) as inf:
+            return Counter((token, int(count)) for token, count in
+                           [l.split('\t') for l in inf.read().strip().split('\n')])
+    else:
+        return Counter()
+
+
+def write_vocab(vocab, vocab_file):
+    """Destructively modifies vocab (removes <unk> and </s>)."""
+    with openall(vocab_file, 'wt') as outf:
+        print('<unk>\t{}\n</s>\t{}'.format(
+            vocab.pop('<unk>'), vocab.pop('</s>')), file=outf)
+        for token, freq in vocab.most_common():
+            print('{}\t{}'.format(token, freq), file=outf)
 
 
 def input_length(input_files):
@@ -70,16 +92,6 @@ def divide_text(input_size, input_iter, batch_size, output_prefix):
                 print(('\n'.join(tokens_to_write)), file=outf)
                 written += len(tokens_to_write)
                 tokens = tokens[len(tokens_to_write):]
-
-
-def print_vocab(vocab, vocab_file):
-    """Destructively modifies vocab (removes <unk> and </s>)."""
-    with openall(vocab_file, 'wt') as outf:
-        print('<unk>\n</s>', file=outf)
-        del vocab['<unk>']
-        del vocab['</s>']
-        for token, _ in vocab.most_common():
-            print(token, file=outf)
 
 
 class DataLoader(object):
@@ -156,11 +168,12 @@ class DataLoader(object):
 
 def main():
     args = parse_arguments()
-    vocab = Counter()
+    vocab = read_vocab(args.vocab_file) if args.vocab_file else Counter()
     input_size = input_length(args.input_files)
     input_iter = read_input(args.input_files, vocab)
     divide_text(input_size, input_iter, args.batch_size, args.output_prefix)
-    print_vocab(vocab, args.output_prefix + '.vocab.gz')
+    write_vocab(vocab, args.vocab_file if args.vocab_file
+                                       else args.output_prefix + '.vocab.gz')
 
 
 if __name__ == '__main__':
