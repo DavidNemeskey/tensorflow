@@ -22,13 +22,10 @@ class LSTMModel(object):
         a single number per token; if not, it must be one-hot encoded.
         """
         dims = [self.params.batch_size, self.params.num_steps]
-        if self.params.embedding != 'no':
-            self._input_data = tf.placeholder(tf.int32, dims)
-            self._targets = tf.placeholder(tf.int32, dims)
-        else:
-            dims += [self.params.vocab_size]
-            self._input_data = tf.placeholder(self.params.data_type, dims)
-            self._targets = tf.placeholder(self.params.data_type, dims)
+        self._input_data = tf.placeholder(
+            tf.int32, dims, name='input_placeholder')
+        self._targets = tf.placeholder(
+            tf.int32, dims, name='target_placeholder')
 
     def _build_network(self):
         # Slightly better results can be obtained with forget gate biases
@@ -36,23 +33,28 @@ class LSTMModel(object):
         # different than reported in the paper.
         # D: Not really...
         lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(
-            self.params.hidden_size, forget_bias=0.0)
+            self.params.hidden_size, forget_bias=1.0, state_is_tuple=True)
         if self.is_training and self.params.keep_prob < 1:
             lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
                 lstm_cell, output_keep_prob=self.params.keep_prob)
-        cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * self.params.num_layers)
+        cell = tf.nn.rnn_cell.MultiRNNCell(
+            [lstm_cell] * self.params.num_layers, state_is_tuple=True)
 
         self._initial_state = cell.zero_state(self.params.batch_size,
                                               dtype=self.params.data_type)
 
         if self.params.embedding == 'yes':
+            # If using an embedding, the input is a single number per token...
             with tf.device("/cpu:0"):
                 embedding = tf.get_variable(
                     'embedding', [self.params.vocab_size, self.params.hidden_size],
                     dtype=self.params.data_type)
                 inputs = tf.nn.embedding_lookup(embedding, self._input_data)
         else:
-            inputs = self._input_data
+            # ..., if not, it must be one-hot encoded.
+            inputs = tf.one_hot(self._input_data, self.params.vocab_size,
+                                dtype=self.params.data_type)
+            # tf.unpack(inputs, axis=1) only needed for rnn, not dynamic_rnn
 
         if self.is_training and self.params.keep_prob < 1:
             inputs = tf.nn.dropout(inputs, self.params.keep_prob)
@@ -77,6 +79,8 @@ class LSTMModel(object):
 
         # output = tf.reshape(tf.concat(1, outputs), [-1, hidden_size])
 
+        # This could be replaced by tf.scan(), see
+        # http://r2rt.com/recurrent-neural-networks-in-tensorflow-ii.html
         outputs, state = tf.nn.dynamic_rnn(
             inputs=inputs, cell=cell, dtype=self.params.data_type,
             initial_state=self._initial_state)

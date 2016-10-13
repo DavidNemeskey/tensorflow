@@ -142,7 +142,7 @@ def run_epoch(session, model, data, verbose=False):
     start_time = time.time()
     costs = 0.0
     iters = 0
-    state = model.initial_state.eval(session=session)
+    state = session.run(model.initial_state)
 
     fetches = [model.cost, model.final_state, model.train_op]
 
