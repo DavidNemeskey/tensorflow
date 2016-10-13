@@ -38,8 +38,8 @@ def parse_arguments():
 def read_vocab(vocab_file):
     if os.path.isfile(vocab_file):
         with openall(vocab_file) as inf:
-            return Counter((token, int(count)) for token, count in
-                           [l.split('\t') for l in inf.read().strip().split('\n')])
+            return Counter({token: int(count) for token, count in
+                           [l.split('\t') for l in inf.read().strip().split('\n')]})
     else:
         return Counter()
 
@@ -97,7 +97,7 @@ def divide_text(input_size, input_iter, batch_size, output_prefix):
 class DataLoader(object):
     """Loads the data written by this script."""
     def __init__(self, header, batch_size, num_steps, one_hot=False,
-                 data_type=np.int32, vocab=None):
+                 data_type=np.int32, vocab_file=None):
         self.header = header
         self.batch_size = batch_size
         self.num_steps = num_steps
@@ -105,7 +105,8 @@ class DataLoader(object):
         self.data_type = data_type
         data_batches, self.data_len = self._read_header()
         self.queues = self._setup_queues(data_batches)
-        self.vocab = self._read_vocab() if not vocab else vocab
+        self.vocab = self._read_vocab(
+            vocab_file if vocab_file else self.header + '.vocab.gz')
         self.epoch_size = (
             ((self.data_len // data_batches - 1) // num_steps) *
             len(self.queues[0])
@@ -155,10 +156,10 @@ class DataLoader(object):
             queues[i % self.batch_size].append(self.header + ext_str.format(i))
         return queues
 
-    def _read_vocab(self):
-        with openall(self.header + '.vocab.gz') as inf:
-            return {token: i for i, token in
-                    enumerate(inf.read().strip().split())}
+    def _read_vocab(self, vocab_file):
+        with openall(vocab_file) as inf:
+            return {token_freq.split('\t')[0]: i for i, token_freq in
+                    enumerate(inf.read().strip().split('\n'))}
 
     def _read_header(self):
         with openall(self.header) as inf:
@@ -172,8 +173,9 @@ def main():
     input_size = input_length(args.input_files)
     input_iter = read_input(args.input_files, vocab)
     divide_text(input_size, input_iter, args.batch_size, args.output_prefix)
-    write_vocab(vocab, args.vocab_file if args.vocab_file
-                                       else args.output_prefix + '.vocab.gz')
+    write_vocab(vocab,
+                args.vocab_file if args.vocab_file
+                else args.output_prefix + '.vocab.gz')
 
 
 if __name__ == '__main__':

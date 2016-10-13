@@ -38,6 +38,8 @@ def parse_arguments():
                         help='the text file to use as a validation set.')
     parser.add_argument('test_file',
                         help='the text file to use as a test set.')
+    parser.add_argument('vocab_file',
+                        help='the vocabulary file.')
     parser.add_argument('--model-name', '-m', default='RNN CLM',
                         help='the name of the model [RNN CLM].')
     parser.add_argument('--batch-size', '-b', type=int, default=100,
@@ -182,11 +184,11 @@ def main():
     args = parse_arguments()
 
     train_data = DataLoader(args.train_file, args.batch_size, args.num_steps,
-                            one_hot=not args.embedding)
+                            one_hot=not args.embedding, vocab_file=args.vocab_file)
     valid_data = DataLoader(args.valid_file, args.batch_size, args.num_steps,
-                            one_hot=not args.embedding, vocab=train_data.vocab)
+                            one_hot=not args.embedding, vocab_file=args.vocab_file)
     test_data = DataLoader(args.test_file, 1, 1, one_hot=not args.embedding,
-                           vocab=train_data.vocab)
+                           vocab_file=args.vocab_file)
 
     params = AttrDict(
         hidden_size=args.num_nodes,
