@@ -54,10 +54,18 @@ def write_vocab(vocab, vocab_file):
 
 
 def input_length(input_files):
-    s = subprocess.getoutput('wc -wl ' + ' '.join(input_files))
-    fields = s.strip().rsplit('\n', 1)[-1].strip().split()
-    # field 3 is 'total' if |input_files| > 1 else the name of the file
-    return int(fields[0]) + int(fields[1])
+    sum_len = 0
+    for input_file in input_files:
+        if input_file.endswith('.gz'):
+            cmd = 'zcat'
+        elif input_file.endswith('.bz2'):
+            cmd = 'bzcat'
+        else:
+            cmd = 'cat'
+        s = subprocess.getoutput('{} "{}" | wc -wl'.format(cmd, input_file))
+        fields = s.strip().rsplit('\n', 1)[-1].strip().split()
+        sum_len += int(fields[0]) + int(fields[1])
+    return sum_len
 
 
 def read_input(input_files, vocab):
