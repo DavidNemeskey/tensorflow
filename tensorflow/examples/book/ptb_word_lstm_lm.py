@@ -136,7 +136,7 @@ class TestConfig(object):
     vocab_size = 10000
 
 
-def run_epoch(session, model, data, verbose=False):
+def run_epoch(session, model, data, verbose=0):
     """Runs the model on the given data."""
     epoch_size = ((len(data) // model.params.batch_size) - 1) // model.params.num_steps
     start_time = time.time()
@@ -145,6 +145,7 @@ def run_epoch(session, model, data, verbose=False):
     state = session.run(model.initial_state)
 
     fetches = [model.cost, model.final_state, model.train_op]
+    log_every = epoch_size // verbose
 
     for step, (x, y) in enumerate(reader.ptb_iterator(data, model.params.batch_size,
                                                       model.params.num_steps)):
@@ -158,7 +159,7 @@ def run_epoch(session, model, data, verbose=False):
         costs += cost
         iters += model.params.num_steps
 
-        if verbose and step % (epoch_size // 10) == 10:
+        if verbose and step % (epoch_size // log_every) == log_every - 1:
             print("%.3f perplexity: %.3f speed: %.0f wps" %
                   (step * 1.0 / epoch_size, np.exp(costs / iters),
                    iters * model.params.batch_size / (time.time() - start_time)))

@@ -76,6 +76,9 @@ def parse_arguments():
                         help='the initial scale of the weights [0.1].')
     parser.add_argument('--max-grad-norm', '-g', type=float, default=None,
                         help='the limit for gradient clipping [None].')
+    parser.add_argument('--verbose', '-v', type=int, default=10,
+                        help='print the perplexity how many times in an '
+                             'epoch [10].')
     parser.add_argument('--early-stopping', type=int, default=0,
                         help='early stop after the perplexity has been '
                              'detoriating after this many steps. If 0 (the '
@@ -93,7 +96,7 @@ def parse_arguments():
     return args
 
 
-def run_epoch(session, model, data, epoch_size=0, verbose=False):
+def run_epoch(session, model, data, epoch_size=0, verbose=0):
     """
     Runs an epoch on the network.
     - epoch_size: if 0, it is taken from data
@@ -109,6 +112,7 @@ def run_epoch(session, model, data, epoch_size=0, verbose=False):
     state = session.run(model.initial_state)
 
     fetches = [model.cost, model.final_state, model.train_op]
+    log_every = epoch_size // verbose
 
     for step in range(epoch_size):
         x, y = next(data_iter)
@@ -126,7 +130,7 @@ def run_epoch(session, model, data, epoch_size=0, verbose=False):
         cost, state, _ = session.run(fetches, feed_dict)
         costs += cost
         iters += model.params.num_steps
-        if verbose and step % (epoch_size // 10) == 10:
+        if verbose and step % log_every == log_every - 1:
             print("%.3f perplexity: %.3f speed: %.0f wps" %
                   (step * 1.0 / epoch_size, np.exp(costs / iters),
                    iters * model.params.batch_size / (time.time() - start_time)))
@@ -241,7 +245,7 @@ def main():
                 mtrain.assign_lr(sess, args.learning_rate * lr_decay)
 
                 train_perplexity, _ = run_epoch(sess, mtrain, train_data, 0,
-                                                verbose=True)
+                                                verbose=args.verbose)
                 valid_perplexity, _ = run_epoch(sess, mvalid, valid_data)
                 print('Epoch {:2d} train PPL {:6.3f} valid PPL {:6.3f}'.format(
                     epoch, train_perplexity, valid_perplexity))
