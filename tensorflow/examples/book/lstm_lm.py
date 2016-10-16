@@ -17,6 +17,7 @@ import tensorflow as tf
 from auxiliary import AttrDict
 from cut_lm_input import DataLoader
 from lstm_model import LSTMModel
+from softmax import get_loss_function
 
 
 def get_sconfig(gpu_memory):
@@ -88,6 +89,12 @@ def parse_arguments():
                              'really meaningful if there are no checkpoints.')
     parser.add_argument('--gpu-memory', type=float, default=None,
                         help='limit on the GPU memory ratio [None].')
+    parser.add_argument('--trainsm', default='Softmax',
+                        help='the softmax loss alterative to use.')
+    parser.add_argument('--validsm', default='Softmax',
+                        help='the softmax loss alterative to use.')
+    parser.add_argument('--testsm', default='Softmax',
+                        help='the softmax loss alterative to use.')
     args = parser.parse_args()
 
     if args.decay_delay is None:
@@ -112,7 +119,8 @@ def run_epoch(session, model, data, epoch_size=0, verbose=0):
     state = session.run(model.initial_state)
 
     fetches = [model.cost, model.final_state, model.train_op]
-    log_every = epoch_size // verbose
+    if verbose:
+        log_every = epoch_size // verbose
 
     for step in range(epoch_size):
         x, y = next(data_iter)
@@ -188,11 +196,10 @@ def main():
     args = parse_arguments()
 
     train_data = DataLoader(args.train_file, args.batch_size, args.num_steps,
-                            one_hot=not args.embedding, vocab_file=args.vocab_file)
+                            vocab_file=args.vocab_file)
     valid_data = DataLoader(args.valid_file, args.batch_size, args.num_steps,
-                            one_hot=not args.embedding, vocab_file=args.vocab_file)
-    test_data = DataLoader(args.test_file, 1, 1, one_hot=not args.embedding,
-                           vocab_file=args.vocab_file)
+                            vocab_file=args.vocab_file)
+    test_data = DataLoader(args.test_file, 1, 1, vocab_file=args.vocab_file)
 
     params = AttrDict(
         hidden_size=args.num_nodes,
@@ -211,6 +218,15 @@ def main():
     eval_params.batch_size = 1
     eval_params.num_steps = 1
 
+    trainsm = get_loss_function(
+        args.trainsm, params.hidden_size, params.vocab_size, params.batch_size,
+        params.num_steps, params.data_type)
+    validsm = get_loss_function(
+        args.validsm, params.hidden_size, params.vocab_size, params.batch_size,
+        params.num_steps, params.data_type)
+    testsm = get_loss_function(
+        args.testsm, params.hidden_size, params.vocab_size, 1, 1, params.data_type)
+
     with tf.Graph().as_default() as graph:
         # init_scale = 1 / math.sqrt(args.num_nodes)
         initializer = tf.random_uniform_initializer(
@@ -218,13 +234,13 @@ def main():
 
         with tf.name_scope('Train'):
             with tf.variable_scope("Model", reuse=None, initializer=initializer):
-                mtrain = LSTMModel(params, is_training=True)
+                mtrain = LSTMModel(params, is_training=True, softmax=trainsm)
         with tf.name_scope('Valid'):
             with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                mvalid = LSTMModel(params, is_training=False)
+                mvalid = LSTMModel(params, is_training=False, softmax=validsm)
         with tf.name_scope('Test'):
             with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                mtest = LSTMModel(eval_params, is_training=False)
+                mtest = LSTMModel(eval_params, is_training=False, softmax=testsm)
         with tf.name_scope('Global_ops'):
             saver = tf.train.Saver(
                 name='saver', max_to_keep=max(10, args.early_stopping + 1))

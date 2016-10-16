@@ -3,13 +3,13 @@ import tensorflow as tf
 
 class LSTMModel(object):
     """Generic LSTM language model based on the PTB model in tf/models."""
-    def __init__(self, params, is_training):
+    def __init__(self, params, is_training, softmax):
         self.is_training = is_training
         self.params = params
 
         self._data()
         outputs = self._build_network()
-        self._cost = self._shared_loss(outputs)
+        self._cost = softmax(outputs, self._targets)  # self._shared_loss(outputs, softmax)
 
         if is_training:
             self._optimize()
@@ -96,14 +96,19 @@ class LSTMModel(object):
             dtype=self.params.data_type)
         softmax_b = tf.get_variable(
             "softmax_b", [self.params.vocab_size], dtype=self.params.data_type)
-        logits = tf.matmul(flat_output, softmax_w) + softmax_b
+        # logits = tf.matmul(flat_output, softmax_w) + softmax_b
+        # loss = tf.nn.seq2seq.sequence_loss_by_example(
+        #     [logits],
+        #     [tf.reshape(self._targets, [-1])],
+        #     [tf.ones([self.params.batch_size * self.params.num_steps],
+        #              dtype=self.params.data_type)])
         # softmax = tf.nn.softmax(logits)
         # prediction = tf.reshape(softmax, [-1, self.num_steps, vocab_size])
-        loss = tf.nn.seq2seq.sequence_loss_by_example(
-            [logits],
-            [tf.reshape(self._targets, [-1])],
-            [tf.ones([self.params.batch_size * self.params.num_steps],
-                     dtype=self.params.data_type)])
+        num_sampled = 4096
+        loss = tf.nn.sampled_softmax_loss(
+            tf.transpose(softmax_w), softmax_b,         # .T for some reason
+            flat_output, tf.reshape(self.targets, [-1, 1]),  # Column vector
+            num_sampled, self.params.vocab_size)
         cost = tf.reduce_sum(loss) / self.params.batch_size
         return cost
 
