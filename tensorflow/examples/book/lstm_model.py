@@ -10,7 +10,6 @@ class LSTMModel(object):
         self._data()
         outputs = self._build_network()
         if need_prediction:
-            print(softmax)
             self._cost, self.prediction = softmax(
                 outputs, self._targets, need_prediction)
         else:
