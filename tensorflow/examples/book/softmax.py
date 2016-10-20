@@ -28,7 +28,7 @@ class LossAndPrediction(object):
 
 
 class Softmax(LossAndPrediction):
-    def __call__(self, outputs, targets):
+    def __call__(self, outputs, targets, need_prediction=False):
         """Computes the shared loss over all time-steps."""
         flat_output = tf.reshape(outputs, [-1, self.hidden_size])
         softmax_w = tf.get_variable(
@@ -44,7 +44,12 @@ class Softmax(LossAndPrediction):
             [tf.ones([self.batch_size * self.num_steps],
                      dtype=self.data_type)])
         loss = tf.reduce_sum(cost) / self.batch_size
-        return loss
+        if need_prediction:
+            prediction = tf.reshape(
+                tf.nn.softmax(logits), [-1, self.num_steps, self.vocab_size])
+            return loss, prediction
+        else:
+            return loss
 
 
 class SamplingError(LossAndPrediction):

@@ -45,14 +45,12 @@ def parse_arguments():
                         help='the name of the model [RNN CLM].')
     parser.add_argument('--batch-size', '-b', type=int, default=100,
                         help='the training batch size [100].')
-    # parser.add_argument('--num-unrollings', '-u', type=int, default=10,
-    #                     help='unroll the RNN for how many steps [10].')
     parser.add_argument('--num-nodes', '-n', type=int, default=200,
                         help='use how many RNN cells [200].')
     parser.add_argument('--num-steps', '-w', type=int, default=20,
                         help='how many steps to unroll the network for [20].')
-    parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
-                        default='lstm', help='the RNN cell to use [lstm].')
+    #parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
+    #                    default='lstm', help='the RNN cell to use [lstm].')
     parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
     parser.add_argument('--dropout', '-D', type=float, default=1.0,
@@ -224,7 +222,6 @@ def main():
         learning_rate=args.learning_rate,
         max_grad_norm=args.max_grad_norm,
         embedding=args.embedding,
-        lr_decay=args.lr_decay,
         data_type=tf.float32,
     )
     eval_params = AttrDict(params)

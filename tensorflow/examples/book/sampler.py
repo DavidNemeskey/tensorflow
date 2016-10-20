@@ -28,7 +28,7 @@ def parse_arguments():
     parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
     parser.add_argument('--sampling-temperature', '-s', type=float, default=0.5,
-                        help='sampling temperature ("adventuroussness").')
+                        help='sampling temperature ("adventurousness").')
     parser.add_argument('--text-length', '-l', type=int, default=100,
                         help='length of the generated text.')
     args = parser.parse_args()

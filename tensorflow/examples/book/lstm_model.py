@@ -3,13 +3,18 @@ import tensorflow as tf
 
 class LSTMModel(object):
     """Generic LSTM language model based on the PTB model in tf/models."""
-    def __init__(self, params, is_training, softmax):
+    def __init__(self, params, is_training, softmax, need_prediction=False):
         self.is_training = is_training
         self.params = params
 
         self._data()
         outputs = self._build_network()
-        self._cost = softmax(outputs, self._targets)  # self._shared_loss(outputs, softmax)
+        if need_prediction:
+            print(softmax)
+            self._cost, self.prediction = softmax(
+                outputs, self._targets, need_prediction)
+        else:
+            self._cost = softmax(outputs, self._targets)
 
         if is_training:
             self._optimize()
