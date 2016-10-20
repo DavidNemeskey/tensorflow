@@ -16,13 +16,15 @@ class LSTMModel(object):
         else:
             self._train_op = tf.no_op()
 
-        with tf.name_scope('Summaries'):
+        with tf.name_scope('Summaries') as scope:
             summaries = []
             summaries.append(
-                tf.scalar_summary(b'Loss', self._cost, 'loss_summary'))
+                tf.scalar_summary(bytes(scope, 'utf-8') + b'Loss',
+                                  self._cost, name='loss_summary'))
             if is_training:
                 summaries.append(
-                    tf.scalar_summary(b'Learning rate', self._lr, 'lr_summary'))
+                    tf.scalar_summary(bytes(scope, 'utf-8') + b'Learning rate',
+                                      self._lr, name='lr_summary'))
             self.summaries = tf.merge_summary(summaries)
 
     def _data(self):
