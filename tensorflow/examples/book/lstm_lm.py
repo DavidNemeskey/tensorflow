@@ -139,7 +139,8 @@ def run_epoch(session, model, data, epoch_size=0, verbose=0,
 
         if verbose and step % log_every == log_every - 1:
             cost, state, _, summary = session.run(fetches_summary, feed_dict)
-            writer.add_summary(summary, global_step=global_step)
+            if writer:
+                writer.add_summary(summary, global_step=global_step)
             if model.is_training:
                 global_step += 1
         else:
