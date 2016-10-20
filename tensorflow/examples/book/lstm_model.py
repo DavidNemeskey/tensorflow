@@ -16,6 +16,15 @@ class LSTMModel(object):
         else:
             self._train_op = tf.no_op()
 
+        with tf.name_scope('Summaries'):
+            summaries = []
+            summaries.append(
+                tf.scalar_summary(b'Loss', self._cost, 'loss_summary'))
+            if is_training:
+                summaries.append(
+                    tf.scalar_summary(b'Learning rate', self._lr, 'lr_summary'))
+            self.summaries = tf.merge_summary(summaries)
+
     def _data(self):
         """
         Creates the input placeholders. If using an embedding, the input is

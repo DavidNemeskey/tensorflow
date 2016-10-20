@@ -103,7 +103,8 @@ def parse_arguments():
     return args
 
 
-def run_epoch(session, model, data, epoch_size=0, verbose=0):
+def run_epoch(session, model, data, epoch_size=0, verbose=0,
+              global_step=0, writer=None):
     """
     Runs an epoch on the network.
     - epoch_size: if 0, it is taken from data
@@ -119,6 +120,7 @@ def run_epoch(session, model, data, epoch_size=0, verbose=0):
     state = session.run(model.initial_state)
 
     fetches = [model.cost, model.final_state, model.train_op]
+    fetches_summary = fetches + [model.summaries]
     if verbose:
         log_every = epoch_size // verbose
 
@@ -135,16 +137,26 @@ def run_epoch(session, model, data, epoch_size=0, verbose=0):
             model.initial_state: state
         }
 
-        cost, state, _ = session.run(fetches, feed_dict)
+        if verbose and step % log_every == log_every - 1:
+            cost, state, _, summary = session.run(fetches_summary, feed_dict)
+            writer.add_summary(summary, global_step=global_step)
+            if model.is_training:
+                global_step += 1
+        else:
+            cost, state, _ = session.run(fetches, feed_dict)
         costs += cost
         iters += model.params.num_steps
         if verbose and step % log_every == log_every - 1:
             print("%.3f perplexity: %.3f speed: %.0f wps" %
                   (step * 1.0 / epoch_size, np.exp(costs / iters),
                    iters * model.params.batch_size / (time.time() - start_time)))
-    end_time = time.time()
 
-    return np.exp(costs / iters), end_time - start_time
+    # global_step is what the user sees, i.e. if the output is verbose, it is
+    # increased, otherwise it isn't
+    if not verbose and model.is_training:
+        global_step += 1
+
+    return np.exp(costs / iters), global_step
 
 
 def stop_early(valid_ppls, early_stop, save_dir):
@@ -250,7 +262,10 @@ def main():
     # The training itself
     with tf.Session(graph=graph, config=get_sconfig(args.gpu_memory)) as sess:
         save_dir = os.path.join('saves', args.model_name)
+        boards_dir = os.path.join('boards', args.model_name)
+        writer = tf.train.SummaryWriter(boards_dir, graph=graph)
         last_epoch = init_or_load_session(sess, save_dir, saver, init)
+        global_step = 0
         if not args.test_only:
             print('Epoch {:2d}-                 valid PPL {:6.3f}'.format(
                 last_epoch, run_epoch(sess, mvalid, valid_data, 0)[0]))
@@ -260,8 +275,9 @@ def main():
                 lr_decay = args.lr_decay ** max(epoch - args.decay_delay, 0.0)
                 mtrain.assign_lr(sess, args.learning_rate * lr_decay)
 
-                train_perplexity, _ = run_epoch(sess, mtrain, train_data, 0,
-                                                verbose=args.verbose)
+                train_perplexity, global_step = run_epoch(
+                    sess, mtrain, train_data, 0, verbose=args.verbose,
+                    global_step=global_step, writer=writer)
                 valid_perplexity, _ = run_epoch(sess, mvalid, valid_data)
                 print('Epoch {:2d} train PPL {:6.3f} valid PPL {:6.3f}'.format(
                     epoch, train_perplexity, valid_perplexity))
@@ -275,6 +291,8 @@ def main():
         print('Running evaluation...')
         test_perplexity, _ = run_epoch(sess, mtest, test_data)
         print('Test perplexity: {:.3f}'.format(test_perplexity))
+
+        writer.close()
 
 
 if __name__ == '__main__':
