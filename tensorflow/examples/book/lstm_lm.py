@@ -19,6 +19,8 @@ from cut_lm_input import DataLoader
 from lstm_model import LSTMModel
 from softmax import get_loss_function
 
+TEST_BATCH, TEST_STEPS = 1, 1
+
 
 def get_sconfig(gpu_memory):
     """
@@ -49,8 +51,8 @@ def parse_arguments():
                         help='use how many RNN cells [200].')
     parser.add_argument('--num-steps', '-w', type=int, default=20,
                         help='how many steps to unroll the network for [20].')
-    #parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
-    #                    default='lstm', help='the RNN cell to use [lstm].')
+    # parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
+    #                     default='lstm', help='the RNN cell to use [lstm].')
     parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
     parser.add_argument('--dropout', '-D', type=float, default=1.0,
@@ -206,11 +208,16 @@ def init_or_load_session(sess, save_dir, saver, init):
 def main():
     args = parse_arguments()
 
-    train_data = DataLoader(args.train_file, args.batch_size, args.num_steps,
-                            vocab_file=args.vocab_file)
-    valid_data = DataLoader(args.valid_file, args.batch_size, args.num_steps,
-                            vocab_file=args.vocab_file)
-    test_data = DataLoader(args.test_file, 1, 1, vocab_file=args.vocab_file)
+    test_batch = TEST_BATCH
+    test_steps = TEST_STEPS if args.test_only else args.num_steps
+
+    if not args.test_only:
+        train_data = DataLoader(args.train_file, args.batch_size, args.num_steps,
+                                vocab_file=args.vocab_file)
+        valid_data = DataLoader(args.valid_file, args.batch_size, args.num_steps,
+                                vocab_file=args.vocab_file)
+    test_data = DataLoader(args.test_file, test_batch, test_steps,
+                           vocab_file=args.vocab_file)
 
     params = AttrDict(
         hidden_size=args.num_nodes,
@@ -218,36 +225,38 @@ def main():
         batch_size=args.batch_size,
         num_steps=args.num_steps,
         keep_prob=args.dropout,
-        vocab_size=len(train_data.vocab),
-        learning_rate=args.learning_rate,
+        vocab_size=len(test_data.vocab),
         max_grad_norm=args.max_grad_norm,
         embedding=args.embedding,
         data_type=tf.float32,
     )
     eval_params = AttrDict(params)
-    eval_params.batch_size = 1
-    eval_params.num_steps = 1
+    eval_params.batch_size = test_batch
+    eval_params.num_steps = test_steps
 
-    trainsm = get_loss_function(
-        args.trainsm, params.hidden_size, params.vocab_size, params.batch_size,
-        params.num_steps, params.data_type)
-    validsm = get_loss_function(
-        args.validsm, params.hidden_size, params.vocab_size, params.batch_size,
-        params.num_steps, params.data_type)
+    if not args.test_only:
+        trainsm = get_loss_function(
+            args.trainsm, params.hidden_size, params.vocab_size, params.batch_size,
+            params.num_steps, params.data_type)
+        validsm = get_loss_function(
+            args.validsm, params.hidden_size, params.vocab_size, params.batch_size,
+            params.num_steps, params.data_type)
     testsm = get_loss_function(
-        args.testsm, params.hidden_size, params.vocab_size, 1, 1, params.data_type)
+        args.testsm, params.hidden_size, params.vocab_size,
+        test_batch, test_steps, params.data_type)
 
     with tf.Graph().as_default() as graph:
         # init_scale = 1 / math.sqrt(args.num_nodes)
         initializer = tf.random_uniform_initializer(
             -args.init_scale, args.init_scale)
 
-        with tf.name_scope('Train'):
-            with tf.variable_scope("Model", reuse=None, initializer=initializer):
-                mtrain = LSTMModel(params, is_training=True, softmax=trainsm)
-        with tf.name_scope('Valid'):
-            with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                mvalid = LSTMModel(params, is_training=False, softmax=validsm)
+        if not args.test_only:
+            with tf.name_scope('Train'):
+                with tf.variable_scope("Model", reuse=None, initializer=initializer):
+                    mtrain = LSTMModel(params, is_training=True, softmax=trainsm)
+            with tf.name_scope('Valid'):
+                with tf.variable_scope("Model", reuse=True, initializer=initializer):
+                    mvalid = LSTMModel(params, is_training=False, softmax=validsm)
         with tf.name_scope('Test'):
             with tf.variable_scope("Model", reuse=True, initializer=initializer):
                 mtest = LSTMModel(eval_params, is_training=False, softmax=testsm)
