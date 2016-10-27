@@ -17,6 +17,7 @@ import tensorflow as tf
 from auxiliary import AttrDict
 from cut_lm_input import DataLoader
 from lstm_model import LSTMModel
+from rnn import get_cell_types
 from softmax import get_loss_function
 
 TEST_BATCH, TEST_STEPS = 1, 1
@@ -51,8 +52,8 @@ def parse_arguments():
                         help='use how many RNN cells [200].')
     parser.add_argument('--num-steps', '-w', type=int, default=20,
                         help='how many steps to unroll the network for [20].')
-    # parser.add_argument('--rnn-cell', '-c', choices=['rnn', 'lstm', 'gru'],
-    #                     default='lstm', help='the RNN cell to use [lstm].')
+    parser.add_argument('--rnn-cell', '-C', choices=get_cell_types().keys(),
+                        default='lstm', help='the RNN cell to use [lstm].')
     parser.add_argument('--layers', '-L', type=int, default=1,
                         help='the number of RNN laercell to use [lstm].')
     parser.add_argument('--dropout', '-D', type=float, default=1.0,
@@ -220,6 +221,7 @@ def main():
                            vocab_file=args.vocab_file)
 
     params = AttrDict(
+        rnn_cell=args.rnn_cell,
         hidden_size=args.num_nodes,
         num_layers=args.layers,
         batch_size=args.batch_size,

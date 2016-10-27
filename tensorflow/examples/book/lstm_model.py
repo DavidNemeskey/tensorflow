@@ -1,4 +1,6 @@
 """Generic LSTM language model."""
+from rnn import get_rnn
+
 import tensorflow as tf
 
 class LSTMModel(object):
@@ -47,13 +49,12 @@ class LSTMModel(object):
         # initialized to 1 but the hyperparameters of the model would need to be
         # different than reported in the paper.
         # D: Not really...
-        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(
-            self.params.hidden_size, forget_bias=1.0, state_is_tuple=True)
+        rnn_cell = get_rnn(self.params.rnn_cell, self.params.hidden_size)
         if self.is_training and self.params.keep_prob < 1:
-            lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
-                lstm_cell, output_keep_prob=self.params.keep_prob)
+            rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
+                rnn_cell, output_keep_prob=self.params.keep_prob)
         cell = tf.nn.rnn_cell.MultiRNNCell(
-            [lstm_cell] * self.params.num_layers, state_is_tuple=True)
+            [rnn_cell] * self.params.num_layers, state_is_tuple=True)
 
         self._initial_state = cell.zero_state(self.params.batch_size,
                                               dtype=self.params.data_type)
