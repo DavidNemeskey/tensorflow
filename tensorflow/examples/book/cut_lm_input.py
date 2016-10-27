@@ -147,7 +147,7 @@ class DataLoader(object):
 
     def _read_header(self):
         with openall(self.header) as inf:
-            data_batches, data_len = inf.readline().strip().split('\t')
+            data_batches, data_len = inf.readline().strip().split('\t')[1:]
         return int(data_batches), int(data_len)
 
 

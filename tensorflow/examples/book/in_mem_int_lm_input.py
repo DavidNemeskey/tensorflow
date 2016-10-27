@@ -7,6 +7,7 @@ Saves (and loads) the input (files) as a single file (1 line header + int32s).
 
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
+from builtins import range
 import subprocess
 
 import numpy as np
@@ -68,6 +69,32 @@ def convert_text(input_iter, vocab, input_size, output_prefix):
 
     assert index == input_size
     np.savez(output_prefix, data=arr)
+
+
+class DataLoader(object):
+    """Loads the data written by this script."""
+    def __init__(self, header, batch_size, num_steps, one_hot=False,
+                 data_type=np.int32, vocab_file=None):
+        self.header = header
+        self.batch_size = batch_size
+        self.num_steps = num_steps
+        self.one_hot = one_hot
+        self.data_type = data_type
+        data_batches, self.data_len = batch_size, self._read_header()
+        self.epoch_size = (self.data_len // data_batches - 1) // num_steps
+        self.data = np.load(header + '.npz')['data'][:self.data_len // data_batches * data_batches].reshape(batch_size, -1)
+
+    def _read_header(self):
+        with openall(self.header) as inf:
+            data_len = inf.readline().strip().split('\t')[1]
+        return int(data_len)
+
+    def __iter__(self):
+        num_steps = self.num_steps
+        for i in range(self.epoch_size):
+            start = i * num_steps
+            end = start + num_steps
+            yield self.data[:, start:end], self.data[:, start + 1:end + 1]
 
 
 def main():
