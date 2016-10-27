@@ -9,9 +9,7 @@ the EoS </s> token.
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
 from builtins import range
-from collections import Counter
 import math
-import os
 import subprocess
 import sys
 
@@ -29,28 +27,7 @@ def parse_arguments():
                         help='the training batch size [100].')
     parser.add_argument('--output-prefix', '-o', required=True,
                         help='the prefix of the output files\' names.')
-    parser.add_argument('--vocab-file', '-v', default=None,
-                        help='if specified, the vocabulary file here is '
-                             'reused in favor of a dataset-specific file.')
     return parser.parse_args()
-
-
-def read_vocab(vocab_file):
-    if os.path.isfile(vocab_file):
-        with openall(vocab_file) as inf:
-            return Counter({token: int(count) for token, count in
-                           [l.split('\t') for l in inf.read().strip().split('\n')]})
-    else:
-        return Counter()
-
-
-def write_vocab(vocab, vocab_file):
-    """Destructively modifies vocab (removes <unk> and </s>)."""
-    with openall(vocab_file, 'wt') as outf:
-        print('<unk>\t{}\n</s>\t{}'.format(
-            vocab.pop('<unk>'), vocab.pop('</s>')), file=outf)
-        for token, freq in vocab.most_common():
-            print('{}\t{}'.format(token, freq), file=outf)
 
 
 def input_length(input_files):
@@ -68,13 +45,12 @@ def input_length(input_files):
     return sum_len
 
 
-def read_input(input_files, vocab):
+def read_input(input_files):
     """Reads the input files one-by-one and yields tokens line-by-line."""
     for input_file in input_files:
         with openall(input_file) as inf:
             for line in inf:
                 tokens = line.strip().split() + ['</s>']
-                vocab.update(tokens)
                 yield tokens
 
 
@@ -89,7 +65,7 @@ def divide_text(input_size, input_iter, batch_size, output_prefix):
     out_ext = _digits_format_str(num_outs)
 
     with openall(output_prefix, 'wt') as header:
-        print('{}\t{}'.format(num_outs, input_size), file=header)
+        print('TXT_DISK\t{}\t{}'.format(num_outs, input_size), file=header)
     tokens = []
     for outi in range(num_outs):
         written = 0
@@ -177,13 +153,9 @@ class DataLoader(object):
 
 def main():
     args = parse_arguments()
-    vocab = read_vocab(args.vocab_file) if args.vocab_file else Counter()
     input_size = input_length(args.input_files)
-    input_iter = read_input(args.input_files, vocab)
+    input_iter = read_input(args.input_files)
     divide_text(input_size, input_iter, args.batch_size, args.output_prefix)
-    write_vocab(vocab,
-                args.vocab_file if args.vocab_file
-                else args.output_prefix + '.vocab.gz')
 
 
 if __name__ == '__main__':
