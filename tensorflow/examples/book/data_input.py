@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # vim: set fileencoding=utf-8 :
 
-"""
-Cuts the input (files) into batch_size consecutive chunks; these include
-the EoS </s> token.
-"""
+"""Data readers that processes the output of prepare_input.py."""
 
 import math
 import sys
