@@ -317,6 +317,15 @@ tf_gen_op_wrappers_cc(
     pkg = "//tensorflow/core",
 )
 
+tf_gen_op_wrappers_cc(
+    name = "function_ops",
+    op_lib_names = [
+        "function_ops",
+    ],
+    pkg = "//tensorflow/core",
+    visibility = ["//tensorflow:internal"],
+)
+
 cc_library(
     name = "cc_op_gen_main",
     srcs = [
@@ -395,4 +404,74 @@ filegroup(
         ],
     ),
     visibility = ["//tensorflow:__subpackages__"],
+)
+
+cc_library(
+    name = "queue_runner",
+    srcs = ["training/queue_runner.cc"],
+    hdrs = ["training/queue_runner.h"],
+    deps = [
+        ":coordinator",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core/kernels:ops_util",
+    ],
+)
+
+tf_cc_test(
+    name = "queue_runner_test",
+    srcs = ["training/queue_runner_test.cc"],
+    deps = [
+        "coordinator",
+        ":cc_ops",
+        ":queue_runner",
+        ":scope",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
+)
+
+cc_library(
+    name = "coordinator",
+    srcs = ["training/coordinator.cc"],
+    hdrs = ["training/coordinator.h"],
+    deps = [
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+    ],
+)
+
+tf_cc_test(
+    name = "coordinator_test",
+    srcs = ["training/coordinator_test.cc"],
+    deps = [
+        ":cc_ops",
+        ":coordinator",
+        ":queue_runner",
+        ":scope",
+        "//tensorflow/core:core_cpu",
+        "//tensorflow/core:framework",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:tensorflow",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+        "//tensorflow/core:testlib",
+    ],
 )

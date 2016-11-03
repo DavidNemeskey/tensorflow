@@ -186,10 +186,9 @@ Now that we have defined our model and training loss function, it is
 straightforward to train using TensorFlow.  Because TensorFlow knows the entire
 computation graph, it can use automatic differentiation to find the gradients of
 the loss with respect to each of the variables.  TensorFlow has a variety of
-[built-in optimization algorithms]
-(../../../api_docs/python/train.md#optimizers).  For this example, we will use
-steepest gradient descent, with a step length of 0.5, to descend the cross
-entropy.
+[built-in optimization algorithms](../../../api_docs/python/train.md#optimizers).
+For this example, we will use steepest gradient descent, with a step length of
+0.5, to descend the cross entropy.
 
 ```python
 train_step = tf.train.GradientDescentOptimizer(0.5).minimize(cross_entropy)
@@ -293,7 +292,7 @@ def max_pool_2x2(x):
 ### First Convolutional Layer
 
 We can now implement our first layer. It will consist of convolution, followed
-by max pooling. The convolutional will compute 32 features for each 5x5 patch.
+by max pooling. The convolution will compute 32 features for each 5x5 patch.
 Its weight tensor will have a shape of `[5, 5, 1, 32]`. The first two
 dimensions are the patch size, the next is the number of input channels, and
 the last is the number of output channels. We will also have a bias vector with
@@ -313,7 +312,8 @@ x_image = tf.reshape(x, [-1,28,28,1])
 ```
 
 We then convolve `x_image` with the weight tensor, add the
-bias, apply the ReLU function, and finally max pool.
+bias, apply the ReLU function, and finally max pool. The `max_pool_2x2` method will
+reduce the image size to 14x14.
 
 ```python
 h_conv1 = tf.nn.relu(conv2d(x_image, W_conv1) + b_conv1)
@@ -380,7 +380,7 @@ y_conv = tf.matmul(h_fc1_drop, W_fc2) + b_fc2
 How well does this model do? To train and evaluate it we will use code that is
 nearly identical to that for the simple one layer SoftMax network above.
 
-The differences are that: 
+The differences are that:
 
 - We will replace the steepest gradient descent optimizer with the more
   sophisticated ADAM optimizer.

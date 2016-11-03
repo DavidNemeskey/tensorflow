@@ -25,7 +25,7 @@ import tensorflow as tf
 from tensorflow.contrib.distributions.python.ops import distribution_util
 
 
-class DistributionUtilTest(tf.test.TestCase):
+class AssertCloseTest(tf.test.TestCase):
 
   def testAssertCloseIntegerDtype(self):
     x = [1, 5, 10, 15, 20]
@@ -110,6 +110,9 @@ class DistributionUtilTest(tf.test.TestCase):
             distribution_util.assert_integer_form(w)]):
           tf.identity(w).eval()
 
+
+class GetLogitsAndProbTest(tf.test.TestCase):
+
   def testGetLogitsAndProbImproperArguments(self):
     with self.test_session():
       with self.assertRaises(ValueError):
@@ -126,8 +129,19 @@ class DistributionUtilTest(tf.test.TestCase):
       new_logits, new_p = distribution_util.get_logits_and_prob(
           logits=logits, validate_args=True)
 
-      self.assertAllClose(logits, new_logits.eval())
       self.assertAllClose(p, new_p.eval())
+      self.assertAllClose(logits, new_logits.eval())
+
+  def testGetLogitsAndProbLogitsMultidimensional(self):
+    p = np.array([0.2, 0.3, 0.5], dtype=np.float32)
+    logits = np.log(p)
+
+    with self.test_session():
+      new_logits, new_p = distribution_util.get_logits_and_prob(
+          logits=logits, multidimensional=True, validate_args=True)
+
+      self.assertAllClose(new_p.eval(), p)
+      self.assertAllClose(new_logits.eval(), logits)
 
   def testGetLogitsAndProbProbability(self):
     p = np.array([0.01, 0.2, 0.5, 0.7, .99], dtype=np.float32)
@@ -146,7 +160,7 @@ class DistributionUtilTest(tf.test.TestCase):
       new_logits, new_p = distribution_util.get_logits_and_prob(
           p=p, multidimensional=True, validate_args=True)
 
-      self.assertAllClose(special.logit(p), new_logits.eval())
+      self.assertAllClose(np.log(p), new_logits.eval())
       self.assertAllClose(p, new_p.eval())
 
   def testGetLogitsAndProbProbabilityValidateArgs(self):
@@ -218,6 +232,9 @@ class DistributionUtilTest(tf.test.TestCase):
           p=p4, multidimensional=True, validate_args=False)
       prob.eval()
 
+
+class LogCombinationsTest(tf.test.TestCase):
+
   def testLogCombinationsBinomial(self):
     n = [2, 5, 12, 15]
     k = [1, 2, 4, 11]
@@ -240,6 +257,9 @@ class DistributionUtilTest(tf.test.TestCase):
       counts = [[[1., 1, 0, 0], [2., 2, 1, 0]], [[4., 4, 1, 3], [10, 1, 1, 4]]]
       log_binom = distribution_util.log_combinations(n, counts)
       self.assertEqual([2, 2], log_binom.get_shape())
+
+
+class RotateTransposeTest(tf.test.TestCase):
 
   def _np_rotate_transpose(self, x, shift):
     if not isinstance(x, np.ndarray):
@@ -272,7 +292,10 @@ class DistributionUtilTest(tf.test.TestCase):
               sess.run(distribution_util.rotate_transpose(x, shift),
                        feed_dict={x: x_value, shift: shift_value}))
 
-  def testChooseVector(self):
+
+class PickVectorTest(tf.test.TestCase):
+
+  def testCorrectlyPicksVector(self):
     with self.test_session():
       x = np.arange(10, 12)
       y = np.arange(15, 18)
@@ -288,6 +311,48 @@ class DistributionUtilTest(tf.test.TestCase):
       self.assertAllEqual(
           y, distribution_util.pick_vector(
               tf.constant(False), x, y))  # No eval.
+
+
+class FillLowerTriangularTest(tf.test.TestCase):
+
+  def testCorrectlyMakes1x1LowerTril(self):
+    with self.test_session():
+      x = np.array([[1.], [2], [3]])
+      expected = np.array([[[1.]], [[2]], [[3]]])
+      actual = distribution_util.fill_lower_triangular(x)
+      self.assertAllEqual(expected.shape, actual.get_shape())
+      self.assertAllEqual(expected, actual.eval())
+
+  def testCorrectlyMakesNoBatchLowerTril(self):
+    with self.test_session():
+      x = np.arange(9)
+      expected = np.array(
+          [[0., 0., 0.],
+           [1., 2., 0.],
+           [3., 4., 5.]])
+      actual = distribution_util.fill_lower_triangular(x)
+      self.assertAllEqual(expected.shape, actual.get_shape())
+      self.assertAllEqual(expected, actual.eval())
+
+  def testCorrectlyMakesBatchLowerTril(self):
+    with self.test_session():
+      x = np.reshape(np.arange(24), (2, 2, 6))
+      expected = np.array(
+          [[[[0., 0., 0.],
+             [1., 2., 0.],
+             [3., 4., 5.]],
+            [[6., 0., 0.],
+             [7., 8., 0.],
+             [9., 10., 11.]]],
+           [[[12., 0., 0.],
+             [13., 14., 0.],
+             [15., 16., 17.]],
+            [[18., 0., 0.],
+             [19., 20., 0.],
+             [21., 22., 23.]]]])
+      actual = distribution_util.fill_lower_triangular(x)
+      self.assertAllEqual(expected.shape, actual.get_shape())
+      self.assertAllEqual(expected, actual.eval())
 
 
 if __name__ == "__main__":

@@ -142,9 +142,8 @@ to the `Convolution` section for details about the padding calculation.
 
 Morphological operators are non-linear filters used in image processing.
 
-[Greyscale morphological dilation]
-(https://en.wikipedia.org/wiki/Dilation_(morphology)) is the max-sum counterpart
-of standard sum-product convolution:
+[Greyscale morphological dilation](https://en.wikipedia.org/wiki/Dilation_(morphology))
+is the max-sum counterpart of standard sum-product convolution:
 
     output[b, y, x, c] =
         max_{dy, dx} input[b,
@@ -157,9 +156,8 @@ The `filter` is usually called structuring function. Max-pooling is a special
 case of greyscale morphological dilation when the filter assumes all-zero
 values (a.k.a. flat structuring function).
 
-[Greyscale morphological erosion]
-(https://en.wikipedia.org/wiki/Erosion_(morphology)) is the min-sum counterpart
-of standard sum-product convolution:
+[Greyscale morphological erosion](https://en.wikipedia.org/wiki/Erosion_(morphology))
+is the min-sum counterpart of standard sum-product convolution:
 
     output[b, y, x, c] =
         min_{dy, dx} input[b,
@@ -255,8 +253,8 @@ Candidate Sampling training algorithms can speed up your step times by
 only considering a small randomly-chosen subset of contrastive classes
 (called candidates) for each batch of training examples.
 
-See our [Candidate Sampling Algorithms Reference]
-(../../extras/candidate_sampling.pdf)
+See our
+[Candidate Sampling Algorithms Reference](../../extras/candidate_sampling.pdf)
 
 ### Sampled Loss Functions
 
@@ -278,6 +276,12 @@ classes when using one of the sampled loss functions above.
 ### Miscellaneous candidate sampling utilities
 
 @@compute_accidental_hits
+
+### Quantization ops
+
+@@quantized_relu_x
+@@quantized_max_pool
+@@quantized_avg_pool
 
 """
 from __future__ import absolute_import
@@ -450,7 +454,7 @@ def sigmoid_cross_entropy_with_logits(logits, targets, name=None):
     relu_logits = math_ops.select(cond, logits, zeros)
     neg_abs_logits = math_ops.select(cond, -logits, logits)
     return math_ops.add(relu_logits - logits * targets,
-                        math_ops.log(1 + math_ops.exp(neg_abs_logits)),
+                        math_ops.log1p(math_ops.exp(neg_abs_logits)),
                         name=name)
 
 
@@ -518,7 +522,7 @@ def weighted_cross_entropy_with_logits(logits, targets, pos_weight, name=None):
     log_weight = 1 + (pos_weight - 1) * targets
     return math_ops.add(
         (1 - targets) * logits,
-        log_weight * (math_ops.log(1 + math_ops.exp(-math_ops.abs(logits))) +
+        log_weight * (math_ops.log1p(math_ops.exp(-math_ops.abs(logits))) +
                       nn_ops.relu(-logits)),
         name=name)
 
@@ -936,9 +940,9 @@ def batch_normalization(x,
 
   As described in http://arxiv.org/abs/1502.03167.
   Normalizes a tensor by `mean` and `variance`, and applies (optionally) a
-  `scale` \\\\(\gamma\\\\) to it, as well as an `offset` \\\\(\\beta\\\\):
+  `scale` \\(\gamma\\) to it, as well as an `offset` \\(\beta\\):
 
-  \\\\(\\frac{\gamma(x-\mu)}{\sigma}+\\beta\\\\)
+  \\(\frac{\gamma(x-\mu)}{\sigma}+\beta\\)
 
   `mean`, `variance`, `offset` and `scale` are all expected to be of one of two
   shapes:
@@ -964,9 +968,9 @@ def batch_normalization(x,
     x: Input `Tensor` of arbitrary dimensionality.
     mean: A mean `Tensor`.
     variance: A variance `Tensor`.
-    offset: An offset `Tensor`, often denoted \\\\(\\beta\\\\) in equations, or
+    offset: An offset `Tensor`, often denoted \\(\beta\\) in equations, or
       None. If present, will be added to the normalized tensor.
-    scale: A scale `Tensor`, often denoted \\\\(\gamma\\\\) in equations, or
+    scale: A scale `Tensor`, often denoted \\(\gamma\\) in equations, or
       `None`. If present, the scale is applied to the normalized tensor.
     variance_epsilon: A small float number to avoid dividing by 0.
     name: A name for this operation (optional).
@@ -1025,6 +1029,8 @@ def fused_batch_norm(x, scale, offset,  # pylint: disable=invalid-name
     mean = constant_op.constant([])
   if variance is None:
     variance = constant_op.constant([])
+  # Add 1e-12 to epsilon when epsilon <= 1e-5 to prevent CUDNN exception.
+  epsilon = epsilon if epsilon > 1e-5 else epsilon + 1e-12
   y, batch_mean, batch_var, _, _ = gen_nn_ops.fused_batch_norm(
       x,
       scale,
@@ -1267,10 +1273,8 @@ def nce_loss(weights,
   """Computes and returns the noise-contrastive estimation training loss.
 
   See [Noise-contrastive estimation: A new estimation principle for
-  unnormalized statistical models]
-  (http://www.jmlr.org/proceedings/papers/v9/gutmann10a/gutmann10a.pdf).
-  Also see our [Candidate Sampling Algorithms Reference]
-  (../../extras/candidate_sampling.pdf)
+  unnormalized statistical models](http://www.jmlr.org/proceedings/papers/v9/gutmann10a/gutmann10a.pdf).
+  Also see our [Candidate Sampling Algorithms Reference](../../extras/candidate_sampling.pdf)
 
   Note: By default this uses a log-uniform (Zipfian) distribution for sampling,
   so your labels must be sorted in order of decreasing frequency to achieve

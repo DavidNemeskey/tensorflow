@@ -66,6 +66,16 @@ void WriteStringToFile(const string& filename, const string& file_content,
   }
 }
 
+std::vector<string> GetChildren(const string& dir, TF_Status* out_status) {
+  std::vector<string> results;
+  tensorflow::Status status = tensorflow::Env::Default()->GetChildren(
+      dir, &results);
+  if (!status.ok()) {
+    Set_TF_Status_from_Status(out_status, status);
+  }
+  return results;
+}
+
 std::vector<string> GetMatchingFiles(const string& filename,
                                      TF_Status* out_status) {
   std::vector<string> results;
@@ -176,18 +186,23 @@ tensorflow::io::BufferedInputStream* CreateBufferedInputStream(
     return nullptr;
   }
   std::unique_ptr<tensorflow::io::RandomAccessInputStream> input_stream(
-      new tensorflow::io::RandomAccessInputStream(file.release()));
+      new tensorflow::io::RandomAccessInputStream(
+          file.release(), true /* owns_file */));
   std::unique_ptr<tensorflow::io::BufferedInputStream> buffered_input_stream(
-      new tensorflow::io::BufferedInputStream(input_stream.release(),
-                                              buffer_size));
+      new tensorflow::io::BufferedInputStream(
+          input_stream.release(), buffer_size, true /* owns_input_stream */));
   return buffered_input_stream.release();
 }
 
 tensorflow::WritableFile* CreateWritableFile(
-    const string& filename, TF_Status* out_status) {
+    const string& filename, const string& mode, TF_Status* out_status) {
   std::unique_ptr<tensorflow::WritableFile> file;
-  tensorflow::Status status =
-      tensorflow::Env::Default()->NewWritableFile(filename, &file);
+  tensorflow::Status status;
+  if (mode.find("a") != std::string::npos) {
+    status = tensorflow::Env::Default()->NewAppendableFile(filename, &file);
+  } else {
+    status = tensorflow::Env::Default()->NewWritableFile(filename, &file);
+  }
   if (!status.ok()) {
     Set_TF_Status_from_Status(out_status, status);
     return nullptr;
@@ -198,13 +213,6 @@ tensorflow::WritableFile* CreateWritableFile(
 void AppendToFile(const string& file_content, tensorflow::WritableFile* file,
                   TF_Status* out_status) {
   tensorflow::Status status = file->Append(file_content);
-  if (!status.ok()) {
-    Set_TF_Status_from_Status(out_status, status);
-  }
-}
-
-void FlushWritableFile(tensorflow::WritableFile* file, TF_Status* out_status) {
-  tensorflow::Status status = file->Flush();
   if (!status.ok()) {
     Set_TF_Status_from_Status(out_status, status);
   }
@@ -222,14 +230,6 @@ string ReadFromStream(tensorflow::io::BufferedInputStream* stream,
   return result;
 }
 
-void SeekInStream(tensorflow::io::BufferedInputStream* stream, int64 position,
-                  TF_Status* out_status) {
-  tensorflow::Status status = stream->Seek(position);
-  if (!status.ok()) {
-    Set_TF_Status_from_Status(out_status, status);
-  }
-}
-
 %}
 
 // Ensure that the returned object is destroyed when its wrapper is
@@ -243,6 +243,7 @@ inline void DeleteFile(const string& filename, TF_Status* out_status);
 string ReadFileToString(const string& filename, TF_Status* out_status);
 void WriteStringToFile(const string& filename, const string& file_content,
                        TF_Status* out_status);
+std::vector<string> GetChildren(const string& dir, TF_Status* out_status);
 std::vector<string> GetMatchingFiles(const string& filename,
                                      TF_Status* out_status);
 void CreateDir(const string& dirname, TF_Status* out_status);
@@ -258,27 +259,35 @@ void Stat(const string& filename, tensorflow::FileStatistics* stats,
 tensorflow::io::BufferedInputStream* CreateBufferedInputStream(
     const string& filename, size_t buffer_size, TF_Status* out_status);
 tensorflow::WritableFile* CreateWritableFile(const string& filename,
+                                             const string& mode,
                                              TF_Status* out_status);
 void AppendToFile(const string& file_content, tensorflow::WritableFile* file,
                   TF_Status* out_status);
-void FlushWritableFile(tensorflow::WritableFile* file, TF_Status* out_status);
 string ReadFromStream(tensorflow::io::BufferedInputStream* stream,
                       size_t bytes,
                       TF_Status* out_status);
-void SeekInStream(tensorflow::io::BufferedInputStream* stream, int64 position,
-                  TF_Status* out_status);
+
+%ignore tensorflow::Status::operator=;
+%include "tensorflow/core/lib/core/status.h"
 
 %ignoreall
 %unignore tensorflow::io::BufferedInputStream;
 %unignore tensorflow::io::BufferedInputStream::~BufferedInputStream;
 %unignore tensorflow::io::BufferedInputStream::ReadLineAsString;
+%unignore tensorflow::io::BufferedInputStream::Seek;
 %unignore tensorflow::io::BufferedInputStream::Tell;
 %unignore tensorflow::WritableFile;
+%unignore tensorflow::WritableFile::Close;
+%unignore tensorflow::WritableFile::Flush;
 %unignore tensorflow::WritableFile::~WritableFile;
 %include "tensorflow/core/platform/file_system.h"
 %include "tensorflow/core/lib/io/inputstream_interface.h"
 %include "tensorflow/core/lib/io/buffered_inputstream.h"
 %unignoreall
 
+%include "tensorflow/c/tf_status_helper.h"
+
+%ignore tensorflow::io::internal::JoinPathImpl;
 %include "tensorflow/core/lib/io/path.h"
+
 %include "tensorflow/core/platform/file_statistics.h"

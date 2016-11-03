@@ -18,25 +18,26 @@ limitations under the License.
 
 namespace tensorflow {
 
+// SavedModel assets directory.
+constexpr char kSavedModelAssetsDirectory[] = "assets";
+
+// SavedModel assets key for graph collection-def.
+constexpr char kSavedModelAssetsKey[] = "saved_model_assets";
+
 // SavedModel proto filename.
 constexpr char kSavedModelFilenamePb[] = "saved_model.pb";
 
 // SavedModel text format proto filename.
 constexpr char kSavedModelFilenamePbTxt[] = "saved_model.pbtxt";
 
+// SavedModel legacy init op key.
+constexpr char kSavedModelLegacyInitOpKey[] = "legacy_init_op";
+
 // Directory in which to save the SavedModel variables.
 constexpr char kSavedModelVariablesDirectory[] = "variables";
 
 // SavedModel variables filename.
-constexpr char kSavedModelVariablesFilename[] = "saved_model_variables";
-
-// SavedModel sharded variables filename.
-constexpr char kSavedModelVariablesShardedFilename[] =
-    "saved_model_variables-\?\?\?\?\?-of-\?\?\?\?\?";
-
-// Commonly used tags.
-constexpr char kSavedModelTagServe[] = "serve";
-constexpr char kSavedModelTagTrain[] = "train";
+constexpr char kSavedModelVariablesFilename[] = "variables";
 
 }  // namespace tensorflow
 

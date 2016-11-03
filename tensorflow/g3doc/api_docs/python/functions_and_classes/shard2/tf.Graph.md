@@ -632,8 +632,8 @@ Note that this is unrelated to the
 
 The GraphDef version information of this graph.
 
-For details on the meaning of each version, see [`GraphDef`]
-(https://www.tensorflow.org/code/tensorflow/core/framework/graph.proto).
+For details on the meaning of each version, see
+[`GraphDef`](https://www.tensorflow.org/code/tensorflow/core/framework/graph.proto).
 
 ##### Returns:
 
@@ -737,6 +737,19 @@ with tf.Graph().as_default() as g:
 #### `tf.Graph.building_function` {#Graph.building_function}
 
 Returns True iff this graph represents a function.
+
+
+- - -
+
+#### `tf.Graph.clear_collection(name)` {#Graph.clear_collection}
+
+Clears all values in a collection.
+
+##### Args:
+
+
+*  <b>`name`</b>: The key for the collection. The `GraphKeys` class contains many
+    standard names for collections.
 
 
 - - -

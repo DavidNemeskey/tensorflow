@@ -695,7 +695,9 @@ class OpDefLibrary(object):
           attr_value.list.tensor.extend(
               [_MakeTensor(x, key) for x in value])
         elif attr_def.type == "func":
-          if isinstance(value, compat.bytes_or_text_types):
+          if isinstance(value, attr_value_pb2.NameAttrList):
+            attr_value.func.CopyFrom(value)
+          elif isinstance(value, compat.bytes_or_text_types):
             attr_value.func.name = value
           else:
             value.add_to_graph(ops.get_default_graph())
@@ -725,7 +727,7 @@ class OpDefLibrary(object):
         elif arg.type_list_attr:
           t = _AttrValue(attr_protos, arg.type_list_attr)
           types = t.list.type
-          output_structure.append(len(t.list.type))
+          output_structure.append(len(types))
         else:
           types = [arg.type]
           output_structure.append(None)
@@ -743,14 +745,15 @@ class OpDefLibrary(object):
                               if arg.is_ref]
       with _MaybeColocateWith(must_colocate_inputs):
         # Add Op to graph
+        op = g.create_op(op_type_name, inputs, output_types, name=scope,
+                         input_types=input_types, attrs=attr_protos,
+                         op_def=op_def)
         if output_structure:
-          op = g.create_op(op_type_name, inputs, output_types, name=scope,
-                           input_types=input_types, attrs=attr_protos,
-                           op_def=op_def)
           outputs = op.outputs
-          return _Restructure(ops.convert_n_to_tensor(outputs),
-                              output_structure)
+          res = _Restructure(ops.convert_n_to_tensor(outputs), output_structure)
+          if isinstance(res, list) and not res and op_def.is_stateful:
+            return op
+          else:
+            return res
         else:
-          return g.create_op(op_type_name, inputs, output_types, name=scope,
-                             input_types=input_types, attrs=attr_protos,
-                             op_def=op_def)
+          return op

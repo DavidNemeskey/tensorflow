@@ -18,7 +18,7 @@ py_library(
         "__init__.py",
         "python/framework/__init__.py",
         "python/framework/checkpoint_utils.py",
-        "python/framework/deprecation.py",
+        "python/framework/experimental.py",
         "python/framework/tensor_util.py",
         "python/ops/__init__.py",
         "python/ops/arg_scope.py",
@@ -41,6 +41,10 @@ tf_custom_op_library(
         "kernels/zero_initializer_op.cc",
         "kernels/zero_initializer_op.h",
         "ops/variable_ops.cc",
+    ],
+    gpu_srcs = [
+        "kernels/zero_initializer_op_gpu.cu.cc",
+        "kernels/zero_initializer_op.h",
     ],
 )
 
@@ -97,8 +101,8 @@ py_test(
 )
 
 py_test(
-    name = "deprecation_test",
-    srcs = ["python/framework/deprecation_test.py"],
+    name = "experimental_test",
+    srcs = ["python/framework/experimental_test.py"],
     srcs_version = "PY2AND3",
     deps = ["//tensorflow:tensorflow_py"],
 )
@@ -115,6 +119,7 @@ py_test(
     size = "small",
     srcs = ["python/ops/variables_test.py"],
     srcs_version = "PY2AND3",
+    tags = ["manual"],
     deps = ["//tensorflow:tensorflow_py"],
 )
 

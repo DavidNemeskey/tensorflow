@@ -20,9 +20,9 @@ from __future__ import print_function
 import abc
 
 from tensorflow.contrib.rnn.python.ops import fused_rnn_cell
+from tensorflow.contrib.util import loader
 from tensorflow.python.framework import common_shapes
 from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import load_library
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
@@ -32,9 +32,8 @@ from tensorflow.python.ops import rnn_cell
 from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.platform import resource_loader
 
-_lstm_ops_so = load_library.load_op_library(
+_lstm_ops_so = loader.load_op_library(
     resource_loader.get_path_to_datafile("_lstm_ops.so"))
-assert _lstm_ops_so, "Could not load _lstm_ops.so."
 
 
 # pylint: disable=invalid-name
@@ -340,10 +339,10 @@ class LSTMBlockCell(rnn_cell.RNNCell):
 
   The implementation is based on: http://arxiv.org/abs/1409.2329.
 
-  We add forget_bias (default: 1) to the biases of the forget gate in order to
+  We add `forget_bias` (default: 1) to the biases of the forget gate in order to
   reduce the scale of forgetting in the beginning of the training.
 
-  Unlike rnn_cell.LSTMCell, this is a monolithic op and should be much faster.
+  Unlike `rnn_cell.LSTMCell`, this is a monolithic op and should be much faster.
   The weight and bias matrixes should be compatible as long as the variable
   scope matches, and you use `use_compatible_names=True`.
   """
@@ -449,7 +448,7 @@ class LSTMBlockWrapper(fused_rnn_cell.FusedRNNCell):
     of calling the cell.
 
     Args:
-      inputs: `3-D` tensor with shape `[time_len x batch_size x input_size]`
+      inputs: `3-D` tensor with shape `[time_len, batch_size, input_size]`
       initial_cell_state: initial value for cell state, shape `[batch_size,
         self._num_units]`
       initial_output: initial value of cell output, shape `[batch_size,
@@ -461,10 +460,9 @@ class LSTMBlockWrapper(fused_rnn_cell.FusedRNNCell):
 
     Returns:
       A pair containing:
-      - State: A `3-D` tensor of shape `[time_len x batch_size x
-                    output_size]`
-      - Output: A `3-D` tensor of shape `[time_len x batch_size x
-                    output_size]`
+
+      - State: A `3-D` tensor of shape `[time_len, batch_size, output_size]`
+      - Output: A `3-D` tensor of shape `[time_len, batch_size, output_size]`
     """
     pass
 
@@ -477,25 +475,27 @@ class LSTMBlockWrapper(fused_rnn_cell.FusedRNNCell):
     """Run this LSTM on inputs, starting from the given state.
 
     Args:
-      inputs: `3-D` tensor with shape `[time_len x batch_size x input_size]`
-        or a list of `time_len` tensors of shape `[batch_size x input_size]`.
+      inputs: `3-D` tensor with shape `[time_len, batch_size, input_size]`
+        or a list of `time_len` tensors of shape `[batch_size, input_size]`.
       initial_state: a tuple `(initial_cell_state, initial_output)` with tensors
         of shape `[batch_size, self._num_units]`. If this is not provided, the
         cell is expected to create a zero initial state of type `dtype`.
       dtype: The data type for the initial state and expected output. Required
         if `initial_state` is not provided or RNN state has a heterogeneous
         dtype.
-      sequence_length: Specifies the length of each sequence in inputs. An int32
-        or int64 vector (tensor) size [batch_size], values in [0, time_len).
+      sequence_length: Specifies the length of each sequence in inputs. An
+        `int32` or `int64` vector (tensor) size `[batch_size]`, values in `[0,
+        time_len).`
         Defaults to `time_len` for each element.
-      scope: VariableScope for the created subgraph; defaults to class name.
+      scope: `VariableScope` for the created subgraph; defaults to class name.
 
     Returns:
       A pair containing:
-      - Output: A `3-D` tensor of shape `[time_len x batch_size x output_size]`
-        or a list of time_len tensors of shape `[batch_size x output_size]`, to
-        match the type of the `inputs`.
-      - Final state: a tuple `(cell_state, output)` matching initial_state.
+
+      - Output: A `3-D` tensor of shape `[time_len, batch_size, output_size]`
+        or a list of time_len tensors of shape `[batch_size, output_size]`,
+        to match the type of the `inputs`.
+      - Final state: a tuple `(cell_state, output)` matching `initial_state`.
 
     Raises:
       ValueError: in case of shape mismatches
@@ -531,7 +531,7 @@ class LSTMBlockWrapper(fused_rnn_cell.FusedRNNCell):
           dtype = initial_state[0].dtype
 
       # create the actual cell
-      if sequence_length:
+      if sequence_length is not None:
         sequence_length = ops.convert_to_tensor(sequence_length)
       initial_cell_state, initial_output = initial_state  # pylint: disable=unpacking-non-sequence
       cell_states, outputs = self._call_cell(inputs, initial_cell_state,
@@ -588,7 +588,7 @@ class LSTMBlockFusedCell(LSTMBlockWrapper):
   We add forget_bias (default: 1) to the biases of the forget gate in order to
   reduce the scale of forgetting in the beginning of the training.
 
-  The variable naming is consistent with rnn_cell.LSTMCell.
+  The variable naming is consistent with `rnn_cell.LSTMCell`.
   """
 
   def __init__(self,
@@ -619,21 +619,22 @@ class LSTMBlockFusedCell(LSTMBlockWrapper):
     """Run this LSTM on inputs, starting from the given state.
 
     Args:
-      inputs: `3-D` tensor with shape `[time_len x batch_size x input_size]`
+      inputs: `3-D` tensor with shape `[time_len, batch_size, input_size]`
       initial_cell_state: initial value for cell state, shape `[batch_size,
         self._num_units]`
       initial_output: initial value of cell output, shape `[batch_size,
         self._num_units]`
       dtype: The data type for the initial state and expected output.
-      sequence_length: Specifies the length of each sequence in inputs. An int32
-        or int64 vector (tensor) size [batch_size], values in [0, time_len) or
-          None.
+      sequence_length: Specifies the length of each sequence in inputs. An
+        `int32` or `int64` vector (tensor) size `[batch_size]`, values in `[0,
+        time_len)` or None.
 
     Returns:
       A pair containing:
-      - Cell state (cs): A `3-D` tensor of shape `[time_len x batch_size x
+
+      - Cell state (cs): A `3-D` tensor of shape `[time_len, batch_size,
                          output_size]`
-      - Output (h): A `3-D` tensor of shape `[time_len x batch_size x
+      - Output (h): A `3-D` tensor of shape `[time_len, batch_size,
                     output_size]`
     """
 

@@ -238,6 +238,17 @@ TEST(GcsFileSystemTest, NewWritableFile_ResumeUploadSucceeds) {
                            "Auth Token: fake_token\n"
                            "Header Content-Range: bytes 11-16/17\n"
                            "Put body: ntent2\n",
+                           "", errors::Unavailable("503"), 503),
+       new FakeHttpRequest("Uri: https://custom/upload/location\n"
+                           "Auth Token: fake_token\n"
+                           "Header Content-Range: bytes */17\n"
+                           "Put: yes\n",
+                           "", errors::Unavailable("308"), nullptr,
+                           {{"Range", "bytes=0-12"}}, 308),
+       new FakeHttpRequest("Uri: https://custom/upload/location\n"
+                           "Auth Token: fake_token\n"
+                           "Header Content-Range: bytes 13-16/17\n"
+                           "Put body: ent2\n",
                            "")});
   GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
                    std::unique_ptr<HttpRequest::Factory>(
@@ -568,6 +579,24 @@ TEST(GcsFileSystemTest, FileExists_NotAsBucket) {
   EXPECT_FALSE(fs.FileExists("gs://bucket2"));
 }
 
+TEST(GcsFileSystemTest, GetChildren_NoItems) {
+  std::vector<HttpRequest*> requests({new FakeHttpRequest(
+      "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+      "fields=items%2Fname%2Cprefixes%2CnextPageToken&delimiter=%2F&prefix="
+      "path%2F\n"
+      "Auth Token: fake_token\n",
+      "{\"prefixes\": [\"path/subpath/\"]}")});
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   0 /* read ahead bytes */, 5 /* max upload attempts */);
+
+  std::vector<string> children;
+  TF_EXPECT_OK(fs.GetChildren("gs://bucket/path/", &children));
+
+  EXPECT_EQ(std::vector<string>({"subpath/"}), children);
+}
+
 TEST(GcsFileSystemTest, GetChildren_ThreeFiles) {
   std::vector<HttpRequest*> requests({new FakeHttpRequest(
       "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
@@ -588,6 +617,27 @@ TEST(GcsFileSystemTest, GetChildren_ThreeFiles) {
 
   EXPECT_EQ(std::vector<string>({"file1.txt", "file3.txt", "subpath/"}),
             children);
+}
+
+TEST(GcsFileSystemTest, GetChildren_SelfDirectoryMarker) {
+  std::vector<HttpRequest*> requests({new FakeHttpRequest(
+      "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+      "fields=items%2Fname%2Cprefixes%2CnextPageToken&delimiter=%2F&prefix="
+      "path%2F\n"
+      "Auth Token: fake_token\n",
+      "{\"items\": [ "
+      "  { \"name\": \"path/\" },"
+      "  { \"name\": \"path/file3.txt\" }],"
+      "\"prefixes\": [\"path/subpath/\"]}")});
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   0 /* read ahead bytes */, 5 /* max upload attempts */);
+
+  std::vector<string> children;
+  TF_EXPECT_OK(fs.GetChildren("gs://bucket/path/", &children));
+
+  EXPECT_EQ(std::vector<string>({"file3.txt", "subpath/"}), children);
 }
 
 TEST(GcsFileSystemTest, GetChildren_ThreeFiles_NoSlash) {
@@ -717,8 +767,9 @@ TEST(GcsFileSystemTest, GetMatchingPaths_BucketAndWildcard) {
 
   std::vector<string> result;
   TF_EXPECT_OK(fs.GetMatchingPaths("gs://bucket/*/*", &result));
-  EXPECT_EQ(std::vector<string>(
-                {"gs://bucket/path/file1.txt", "gs://bucket/path/file3.txt"}),
+  EXPECT_EQ(std::vector<string>({"gs://bucket/path/file1.txt",
+                                 "gs://bucket/path/file3.txt",
+                                 "gs://bucket/path/subpath"}),
             result);
 }
 
@@ -740,6 +791,24 @@ TEST(GcsFileSystemTest, GetMatchingPaths_FolderAndWildcard_Matches) {
   TF_EXPECT_OK(fs.GetMatchingPaths("gs://bucket/path/*/file2.txt", &result));
   EXPECT_EQ(std::vector<string>({"gs://bucket/path/subpath/file2.txt"}),
             result);
+}
+
+TEST(GcsFileSystemTest, GetMatchingPaths_SelfDirectoryMarker) {
+  std::vector<HttpRequest*> requests({new FakeHttpRequest(
+      "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+      "fields=items%2Fname%2CnextPageToken&prefix=path%2F\n"
+      "Auth Token: fake_token\n",
+      "{\"items\": [ "
+      "  { \"name\": \"path/\" },"
+      "  { \"name\": \"path/file3.txt\" }]}")});
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   0 /* read ahead bytes */, 5 /* max upload attempts */);
+
+  std::vector<string> result;
+  TF_EXPECT_OK(fs.GetMatchingPaths("gs://bucket/path/*", &result));
+  EXPECT_EQ(std::vector<string>({"gs://bucket/path/file3.txt"}), result);
 }
 
 TEST(GcsFileSystemTest, GetMatchingPaths_FolderAndWildcard_NoMatches) {
@@ -1284,6 +1353,169 @@ TEST(GcsFileSystemTest, CreateDir_Bucket) {
 
   TF_EXPECT_OK(fs.CreateDir("gs://bucket/"));
   TF_EXPECT_OK(fs.CreateDir("gs://bucket"));
+}
+
+TEST(GcsFileSystemTest, DeleteRecursively_Ok) {
+  std::vector<HttpRequest*> requests(
+      {// IsDirectory is checking whether there are children objects.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+           "fields=items%2Fname%2CnextPageToken&prefix=path%2F"
+           "&maxResults=1\n"
+           "Auth Token: fake_token\n",
+           "{\"items\": [ "
+           "  { \"name\": \"path/file1.txt\" }]}"),
+       // GetChildren recursively.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+           "fields=items%2Fname%2CnextPageToken&prefix=path%2F\n"
+           "Auth Token: fake_token\n",
+           "{\"items\": [ "
+           "  { \"name\": \"path/\" },"  // The current directory's marker.
+           "  { \"name\": \"path/file1.txt\" },"
+           "  { \"name\": \"path/subpath/file2.txt\" },"
+           "  { \"name\": \"path/file3.txt\" }]}"),
+       // Delete the current directory's marker.
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2F\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           ""),
+       // Delete the object.
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2Ffile1.txt\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           ""),
+       // Delete the object.
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2Fsubpath%2Ffile2.txt\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           ""),
+       // Delete the object.
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2Ffile3.txt\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           "")});
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   0 /* read ahead bytes */, 5 /* max upload attempts */);
+
+  int64 undeleted_files, undeleted_dirs;
+  TF_EXPECT_OK(fs.DeleteRecursively("gs://bucket/path", &undeleted_files,
+                                    &undeleted_dirs));
+  EXPECT_EQ(0, undeleted_files);
+  EXPECT_EQ(0, undeleted_dirs);
+}
+
+TEST(GcsFileSystemTest, DeleteRecursively_DeletionErrors) {
+  std::vector<HttpRequest*> requests(
+      {// IsDirectory is checking whether there are children objects.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+           "fields=items%2Fname%2CnextPageToken&prefix=path%2F"
+           "&maxResults=1\n"
+           "Auth Token: fake_token\n",
+           "{\"items\": [ "
+           "  { \"name\": \"path/file1.txt\" }]}"),
+       // Calling GetChildren recursively.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+           "fields=items%2Fname%2CnextPageToken&prefix=path%2F\n"
+           "Auth Token: fake_token\n",
+           "{\"items\": [ "
+           "  { \"name\": \"path/file1.txt\" },"
+           "  { \"name\": \"path/subpath/\" },"
+           "  { \"name\": \"path/subpath/file2.txt\" },"
+           "  { \"name\": \"path/file3.txt\" }]}"),
+       // Deleting the object.
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2Ffile1.txt\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           ""),
+       // Deleting the directory marker gs://bucket/path/ - fails with 404.
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2Fsubpath%2F\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           "", errors::NotFound("404"), 404),
+       // Checking if gs://bucket/path/subpath/ is a folder - it is.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+           "fields=items%2Fname%2CnextPageToken&prefix=path%2Fsubpath%2F"
+           "&maxResults=1\n"
+           "Auth Token: fake_token\n",
+           strings::StrCat("{\"items\": [ "
+                           "    { \"name\": \"path/subpath/\" }]}")),
+       // Deleting the object gs://bucket/path/subpath/file2.txt
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2Fsubpath%2Ffile2.txt\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           ""),
+       // Deleting the object s://bucket/path/file3.txt - fails with 404.
+       new FakeHttpRequest("Uri: https://www.googleapis.com/storage/v1/b"
+                           "/bucket/o/path%2Ffile3.txt\n"
+                           "Auth Token: fake_token\n"
+                           "Delete: yes\n",
+                           "", errors::NotFound("404"), 404),
+       // Checking if gs://bucket/path/file3.txt/ is a folder - it's not.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+           "fields=items%2Fname%2CnextPageToken&prefix=path%2Ffile3.txt%2F"
+           "&maxResults=1\n"
+           "Auth Token: fake_token\n",
+           "{}"),
+       // Checking if gs://bucket/path/file3.txt is an object - fails with 404.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o/"
+           "path%2Ffile3.txt?fields=size%2Cupdated\n"
+           "Auth Token: fake_token\n",
+           "", errors::NotFound("404"), 404)});
+
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   0 /* read ahead bytes */, 5 /* max upload attempts */);
+
+  int64 undeleted_files, undeleted_dirs;
+  TF_EXPECT_OK(fs.DeleteRecursively("gs://bucket/path", &undeleted_files,
+                                    &undeleted_dirs));
+  EXPECT_EQ(1, undeleted_files);
+  EXPECT_EQ(1, undeleted_dirs);
+}
+
+TEST(GcsFileSystemTest, DeleteRecursively_NotAFolder) {
+  std::vector<HttpRequest*> requests(
+      {// IsDirectory is checking whether there are children objects.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o?"
+           "fields=items%2Fname%2CnextPageToken&prefix=path%2F"
+           "&maxResults=1\n"
+           "Auth Token: fake_token\n",
+           "{}"),
+       // IsDirectory is checking if the path exists as an object.
+       new FakeHttpRequest(
+           "Uri: https://www.googleapis.com/storage/v1/b/bucket/o/"
+           "path?fields=size%2Cupdated\n"
+           "Auth Token: fake_token\n",
+           "", errors::NotFound("404"), 404)});
+  GcsFileSystem fs(std::unique_ptr<AuthProvider>(new FakeAuthProvider),
+                   std::unique_ptr<HttpRequest::Factory>(
+                       new FakeHttpRequestFactory(&requests)),
+                   0 /* read ahead bytes */, 5 /* max upload attempts */);
+
+  int64 undeleted_files, undeleted_dirs;
+  EXPECT_EQ(error::Code::NOT_FOUND,
+            fs.DeleteRecursively("gs://bucket/path", &undeleted_files,
+                                 &undeleted_dirs)
+                .code());
+  EXPECT_EQ(0, undeleted_files);
+  EXPECT_EQ(1, undeleted_dirs);
 }
 
 }  // namespace

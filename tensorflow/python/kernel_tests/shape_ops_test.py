@@ -22,7 +22,6 @@ import numpy as np
 
 import tensorflow as tf
 
-from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 
 
@@ -36,7 +35,7 @@ def _sparsify(x, thresh=0.5, index_dtype=np.int64):
   x_values = x[non_zero]
   x_shape = x.shape
 
-  return ops.SparseTensor(
+  return tf.SparseTensor(
       indices=x_indices, values=x_values, shape=x_shape), len(x_values)
 
 class ShapeOpsTest(tf.test.TestCase):
@@ -354,11 +353,10 @@ class TileTest(tf.test.TestCase):
         bytes: (tf.string, bytes)
     }
     for dtype_np, (dtype_tf, cast) in types_to_test.items():
-      with self.test_session():
+      with self.test_session(use_gpu=True):
         inp = np.random.rand(4, 1).astype(dtype_np)
-        a = tf.constant([cast(x) for x in inp.ravel(order="C")],
-                     shape=[4, 1],
-                     dtype=dtype_tf)
+        a = tf.constant([cast(x) for x in inp.ravel(order="C")], shape=[4, 1],
+                   dtype=dtype_tf)
         tiled = tf.tile(a, [1, 4])
         result = tiled.eval()
       self.assertEqual(result.shape, (4, 4))

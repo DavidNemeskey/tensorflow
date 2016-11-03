@@ -26,6 +26,7 @@ import numpy as np
 import six
 from six.moves import xrange  # pylint: disable=redefined-builtin
 
+from tensorflow.core.framework import attr_value_pb2
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -89,10 +90,8 @@ def _IndexedSlicesToTensor(value, dtype=None, name=None, as_ref=False):
     warnings.warn(
         "Converting sparse IndexedSlices to a dense Tensor of unknown shape. "
         "This may consume a large amount of memory.")
-  return math_ops.unsorted_segment_sum(value.values,
-                                       value.indices,
-                                       value.dense_shape[0],
-                                       name=name)
+  return math_ops.unsorted_segment_sum(
+      value.values, value.indices, value.dense_shape[0], name=name)
 
 
 ops.register_tensor_conversion_function(ops.IndexedSlices,
@@ -224,8 +223,8 @@ def _DefaultGradYs(grad_ys, ys, colocate_gradients_with_ops):
     if grad_y is None:
       with _maybe_colocate_with(y.op, colocate_gradients_with_ops):
         grad_ys[i] = array_ops.fill(
-            array_ops.shape(y),
-            constant_op.constant(1, dtype=y.dtype))
+            array_ops.shape(y), constant_op.constant(
+                1, dtype=y.dtype))
     else:
       if grad_y.dtype != y.dtype:
         raise ValueError("Y and ys_grad must be of the same type, "
@@ -304,6 +303,20 @@ def _maybe_colocate_with(op, colocate_gradients_with_ops):
     yield
 
 
+def _SymGrad(op, out_grads):
+  """Backprop through a function call node op given its outputs' gradients."""
+  f_in = [x for x in op.inputs] + out_grads
+  f_types = [x.dtype for x in op.inputs]
+  f = attr_value_pb2.NameAttrList()
+  f.name = op.type
+  for k in op.node_def.attr:
+    f.attr[k].CopyFrom(op.node_def.attr[k])
+  # pylint: disable=protected-access
+  in_grads = functional_ops._symbolic_gradient(input=f_in, Tout=f_types, f=f)
+  # pylint: enable=protected-access
+  return in_grads
+
+
 def gradients(ys,
               xs,
               grad_ys=None,
@@ -340,7 +353,7 @@ def gradients(ys,
     colocate_gradients_with_ops: If True, try colocating gradients with
       the corresponding op.
     gate_gradients: If True, add a tuple around the gradients returned
-      for an operations.  This avoids some race conditions.
+      for an operation.  This avoids some race conditions.
     aggregation_method: Specifies the method used to combine gradient terms.
       Accepted values are constants defined in the class `AggregationMethod`.
 
@@ -376,8 +389,8 @@ def gradients(ys,
     # to the xs.
     to_ops = [t.op for t in ys]
     from_ops = [t.op for t in xs]
-    pending_count, loop_state = _PendingCount(ops.get_default_graph(),
-                                              to_ops, from_ops,
+    pending_count, loop_state = _PendingCount(ops.get_default_graph(), to_ops,
+                                              from_ops,
                                               colocate_gradients_with_ops)
 
     # Iterate over the collected ops.
@@ -451,8 +464,8 @@ def gradients(ys,
           # output, it means that the cost does not depend on output[i],
           # therefore dC/doutput[i] is 0.
           for i, out_grad in enumerate(out_grads):
-            if (not isinstance(out_grad, ops.Tensor)
-                and not out_grad) and _IsTrainable(op.outputs[i]):
+            if (not isinstance(out_grad, ops.Tensor) and
+                not out_grad) and _IsTrainable(op.outputs[i]):
               # Only floating-point outputs get a zero gradient. Gradient
               # functions should ignore the gradient for other outputs.
               if loop_state:
@@ -466,16 +479,12 @@ def gradients(ys,
               if grad_fn:
                 # If grad_fn was found, do not use SymbolicGradient even for
                 # functions.
-                in_grads = _AsList(grad_fn(op, *out_grads))
+                in_grads = grad_fn(op, *out_grads)
               else:
                 # For function call ops, we add a 'SymbolicGradient'
                 # node to the graph to compute gradients.
-                f_in = [x for x in op.inputs] + out_grads
-                f_types = [x.dtype for x in op.inputs]
-                # pylint: disable=protected-access
-                in_grads = _AsList(functional_ops._symbolic_gradient(
-                    f_in, f_types, op.type))
-                # pylint: enable=protected-access
+                in_grads = _SymGrad(op, out_grads)
+              in_grads = _AsList(in_grads)
               _VerifyGeneratedGradients(in_grads, op)
               if gate_gradients and len(
                   [x for x in in_grads if x is not None]) > 1:
@@ -595,8 +604,9 @@ def _HandleNestedIndexedSlices(grad):
   else:
     assert isinstance(grad.values, ops.IndexedSlices)
     g = _HandleNestedIndexedSlices(grad.values)
-    return ops.IndexedSlices(
-        g.values, array_ops.gather(grad.indices, g.indices), g.dense_shape)
+    return ops.IndexedSlices(g.values,
+                             array_ops.gather(grad.indices, g.indices),
+                             g.dense_shape)
 
 
 def _AccumulatorShape(inputs):
@@ -610,6 +620,7 @@ def _AccumulatorShape(inputs):
 def _LogOpGradients(op, out_grads, in_grads):
   """Log the in and out grads of an op."""
   logging.vlog(1, "Gradient for '" + op.name + "'")
+
   def _FilterGrad(x):
     if x is None:
       return False
@@ -617,6 +628,7 @@ def _LogOpGradients(op, out_grads, in_grads):
       return bool(x)
     else:
       return True
+
   logging.vlog(1, "  in  --> %s",
                ", ".join([x.name for x in out_grads if _FilterGrad(x)]))
   logging.vlog(1, "  out --> %s",
@@ -636,8 +648,10 @@ def _MultiDeviceAddN(tensor_list):
   # TODO(sjhwang): Create hierarchical aggregation tree as pbar's suggestion.
   # E.g., aggregate per GPU, then per task, and so on.
   summands = []
+
   def DeviceKey(dev):
     return "" if dev is None else dev
+
   for dev in sorted(six.iterkeys(tensors_on_device), key=DeviceKey):
     tensors = tensors_on_device[dev]
     with ops.colocate_with(tensors[0].op, ignore_existing=True):
@@ -689,11 +703,12 @@ def _AggregatedGrads(grads, op, loop_state, aggregation_method=None):
   """
   if aggregation_method is None:
     aggregation_method = AggregationMethod.DEFAULT
-  if aggregation_method not in [AggregationMethod.ADD_N,
-                                AggregationMethod.EXPERIMENTAL_TREE,
-                                AggregationMethod.EXPERIMENTAL_ACCUMULATE_N]:
-    raise ValueError(
-        "Invalid aggregation_method specified %s." % aggregation_method)
+  if aggregation_method not in [
+      AggregationMethod.ADD_N, AggregationMethod.EXPERIMENTAL_TREE,
+      AggregationMethod.EXPERIMENTAL_ACCUMULATE_N
+  ]:
+    raise ValueError("Invalid aggregation_method specified %s." %
+                     aggregation_method)
   out_grads = _GetGrads(grads, op)
   for i, out_grad in enumerate(out_grads):
     if loop_state:
@@ -701,9 +716,10 @@ def _AggregatedGrads(grads, op, loop_state, aggregation_method=None):
         assert control_flow_ops.IsLoopSwitch(op)
         continue
     # Grads have to be Tensors or IndexedSlices
-    if (isinstance(out_grad, collections.Sequence) and
-        not all([isinstance(g, (ops.Tensor, ops.IndexedSlices))
-                 for g in out_grad if g is not None])):
+    if (isinstance(out_grad, collections.Sequence) and not all([
+        isinstance(g, (ops.Tensor, ops.IndexedSlices)) for g in out_grad
+        if g is not None
+    ])):
       raise TypeError("gradients have to be either all Tensors "
                       "or all IndexedSlices")
     # Aggregate multiple gradients, and convert [] to None.
@@ -725,9 +741,10 @@ def _AggregatedGrads(grads, op, loop_state, aggregation_method=None):
           # 2 grads then we fall through to the "tree" case below.
           used = "accumulate_n"
           out_grads[i] = math_ops.accumulate_n(out_grad)
-        elif aggregation_method in [AggregationMethod.EXPERIMENTAL_TREE,
-                                    AggregationMethod.EXPERIMENTAL_ACCUMULATE_N
-                                   ]:
+        elif aggregation_method in [
+            AggregationMethod.EXPERIMENTAL_TREE,
+            AggregationMethod.EXPERIMENTAL_ACCUMULATE_N
+        ]:
           # Aggregate all gradients by doing pairwise sums: this may
           # reduce performance, but it can improve memory because the
           # gradients can be released earlier.
@@ -744,18 +761,18 @@ def _AggregatedGrads(grads, op, loop_state, aggregation_method=None):
         else:
           used = "add_n"
           out_grads[i] = _MultiDeviceAddN(out_grad)
-        logging.vlog(2, "  _AggregatedGrads %d x %s using %s", len(out_grad),
-                     tensor_shape, used)
+        logging.vlog(2, "  _AggregatedGrads %d x %s using %s",
+                     len(out_grad), tensor_shape, used)
       else:
-        out_grad = math_ops._as_indexed_slices_list([g for g in out_grad
-                                                     if g is not None])
+        out_grad = math_ops._as_indexed_slices_list(
+            [g for g in out_grad if g is not None])
         out_grad = [_HandleNestedIndexedSlices(x) for x in out_grad]
         # Form IndexedSlices out of the concatenated values and
         # indices.
         out_grads[i] = ops.IndexedSlices(
             array_ops.concat(0, [x.values for x in out_grad]),
-            array_ops.concat(0, [x.indices
-                                 for x in out_grad]), out_grad[0].dense_shape)
+            array_ops.concat(0, [x.indices for x in out_grad]),
+            out_grad[0].dense_shape)
     else:
       out_grads[i] = []
   return out_grads
@@ -805,9 +822,74 @@ def _hessian_vector_product(ys, xs, v):
   grads = gradients(ys, xs)
 
   assert len(grads) == length
-  elemwise_products = [math_ops.mul(grad_elem, array_ops.stop_gradient(v_elem))
-                       for grad_elem, v_elem in zip(grads, v)
-                       if grad_elem is not None]
+  elemwise_products = [
+      math_ops.mul(grad_elem, array_ops.stop_gradient(v_elem))
+      for grad_elem, v_elem in zip(grads, v) if grad_elem is not None
+  ]
 
   # Second backprop
   return gradients(elemwise_products, xs)
+
+
+def hessians(ys, xs, name="hessians", colocate_gradients_with_ops=False, 
+            gate_gradients=False, aggregation_method=None):
+  """Constructs the Hessian of sum of `ys` with respect to `x` in `xs`.
+
+  `hessians()` adds ops to the graph to output the Hessian matrix of `ys` 
+  with respect to `xs`.  It returns a list of `Tensor` of length `len(xs)` 
+  where each tensor is the Hessian of `sum(ys)`. This function currently
+  only supports evaluating the Hessian with respect to (a list of) one-
+  dimensional tensors.
+
+  The Hessian is a matrix of second-order partial derivatives of a scalar
+  tensor (see https://en.wikipedia.org/wiki/Hessian_matrix for more details).
+
+  Args:
+    ys: A `Tensor` or list of tensors to be differentiated.
+    xs: A `Tensor` or list of tensors to be used for differentiation.
+    name: Optional name to use for grouping all the gradient ops together.
+      defaults to 'hessians'.
+    colocate_gradients_with_ops: See `gradients()` documentation for details.
+    gate_gradients: See `gradients()` documentation for details.
+    aggregation_method: See `gradients()` documentation for details.
+
+  Returns:
+    A list of Hessian matrices of `sum(y)` for each `x` in `xs`.
+
+  Raises:
+    LookupError: if one of the operations between `xs` and `ys` does not
+      have a registered gradient function.
+    ValueError: if the arguments are invalid or not supported. Currently,
+      this function only supports one-dimensional `x` in `xs`.
+  """
+  xs = _AsList(xs)
+  kwargs = {
+      'colocate_gradients_with_ops': colocate_gradients_with_ops,
+      'gate_gradients': gate_gradients,
+      'aggregation_method': aggregation_method
+    }
+  # Compute a hessian matrix for each x in xs
+  hessians = []
+  for i, x in enumerate(xs):
+    # Check dimensions
+    ndims = x.get_shape().ndims
+    if ndims is None:
+      raise ValueError('Cannot compute Hessian because the dimensionality of '
+                       'element number %d of `xs` cannot be determined' % i)
+    elif ndims != 1:
+      raise ValueError('Computing hessians is currently only supported for '
+                       'one-dimensional tensors. Element number %d of `xs` has '
+                       '%d dimensions.' % (i, ndims))
+    with ops.name_scope(name + '_first_derivative'):
+      # Compute the partial derivatives of the input with respect to all 
+      # elements of `x`
+      _gradients = gradients(ys, x, **kwargs)[0]
+      # Unpack the gradients into a list so we can take derivatives with 
+      # respect to each element
+      _gradients = array_ops.unpack(_gradients)
+    with ops.name_scope(name + '_second_derivative'):
+      # Compute the partial derivatives with respect to each element of the list
+      _hess = [gradients(_gradient, x, **kwargs)[0] for _gradient in _gradients]
+      # Pack the list into a matrix and add to the list of hessians
+      hessians.append(array_ops.pack(_hess, name=name))
+  return hessians
