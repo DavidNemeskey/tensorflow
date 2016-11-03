@@ -27,11 +27,13 @@ def get_sconfig(gpu_memory):
     """
     Returns a session configuration object that sets the GPU memory limit.
     """
+    params = {}
+    # params = {'log_device_placement': True}
     if gpu_memory:
-        return tf.ConfigProto(gpu_options=tf.GPUOptions(
-            per_process_gpu_memory_fraction=gpu_memory))
+        params['gpu_options'] = tf.GPUOptions(
+            per_process_gpu_memory_fraction=gpu_memory)
     else:
-        return None
+        return tf.ConfigProto(**params)
 
 
 def parse_arguments():
