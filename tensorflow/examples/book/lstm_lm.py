@@ -15,7 +15,7 @@ import numpy as np
 import tensorflow as tf
 
 from auxiliary import AttrDict
-from cut_lm_input import DataLoader
+from data_input import data_loader
 from lstm_model import LSTMModel
 from rnn import get_cell_types
 from softmax import get_loss_function
@@ -48,9 +48,9 @@ def parse_arguments():
                         help='the name of the model [RNN CLM].')
     parser.add_argument('--batch-size', '-b', type=int, default=100,
                         help='the training batch size [100].')
-    parser.add_argument('--num-nodes', '-n', type=int, default=200,
+    parser.add_argument('--num-nodes', '-N', type=int, default=200,
                         help='use how many RNN cells [200].')
-    parser.add_argument('--num-steps', '-w', type=int, default=20,
+    parser.add_argument('--num-steps', '-s', type=int, default=20,
                         help='how many steps to unroll the network for [20].')
     parser.add_argument('--rnn-cell', '-C', choices=get_cell_types().keys(),
                         default='lstm', help='the RNN cell to use [lstm].')
@@ -63,10 +63,10 @@ def parse_arguments():
                         help='whether to compute an embedding as well [yes].')
     parser.add_argument('--epochs', '-e', type=int, default=20,
                         help='the default number of epochs [20].')
-    parser.add_argument('--epoch-size', '-s', type=int, default=0,
-                        help='the default epoch size. The number of batches '
-                             'processed in an epoch. If 0 (the default), '
-                             'the whole data is processed in an apoch.')
+    # parser.add_argument('--epoch-size', '-s', type=int, default=0,
+    #                     help='the default epoch size. The number of batches '
+    #                          'processed in an epoch. If 0 (the default), '
+    #                          'the whole data is processed in an apoch.')
     parser.add_argument('--learning-rate', '-l', type=float, default=0.02,
                         help='the default learning rate [0.02].')
     parser.add_argument('--lr-decay', '-d', type=float, default=0.5,
@@ -209,16 +209,16 @@ def init_or_load_session(sess, save_dir, saver, init):
 def main():
     args = parse_arguments()
 
-    test_batch = TEST_BATCH
-    test_steps = TEST_STEPS if args.test_only else args.num_steps
+    test_batch = TEST_BATCH if not args.test_only else args.batch_size
+    test_steps = TEST_STEPS
 
     if not args.test_only:
-        train_data = DataLoader(args.train_file, args.batch_size, args.num_steps,
-                                vocab_file=args.vocab_file)
-        valid_data = DataLoader(args.valid_file, args.batch_size, args.num_steps,
-                                vocab_file=args.vocab_file)
-    test_data = DataLoader(args.test_file, test_batch, test_steps,
-                           vocab_file=args.vocab_file)
+        train_data = data_loader(args.train_file, args.batch_size, args.num_steps,
+                                 vocab_file=args.vocab_file)
+        valid_data = data_loader(args.valid_file, args.batch_size, args.num_steps,
+                                 vocab_file=args.vocab_file)
+    test_data = data_loader(args.test_file, test_batch, test_steps,
+                            vocab_file=args.vocab_file)
 
     params = AttrDict(
         rnn_cell=args.rnn_cell,
@@ -260,7 +260,8 @@ def main():
                 with tf.variable_scope("Model", reuse=True, initializer=initializer):
                     mvalid = LSTMModel(params, is_training=False, softmax=validsm)
         with tf.name_scope('Test'):
-            with tf.variable_scope("Model", reuse=True, initializer=initializer):
+            with tf.variable_scope("Model", reuse=not args.test_only,
+                                   initializer=initializer):
                 mtest = LSTMModel(eval_params, is_training=False, softmax=testsm)
         with tf.name_scope('Global_ops'):
             saver = tf.train.Saver(

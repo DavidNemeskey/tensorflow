@@ -72,7 +72,7 @@ class TxtDiskLoader(DataLoader):
             arr = np.zeros((self.batch_size, self.num_steps + 1),
                            dtype=self.data_type)
             arr[:, -1:] = np.array(self._read_from_infs(infs, 1))
-            for i in range(self.epoch_size):
+            for i in range(self.epoch_size // len(self.queues[0])):
                 arr[:, 0] = arr[:, -1]
                 arr[:, 1:] = np.array(
                     self._read_from_infs(infs, self.num_steps))
