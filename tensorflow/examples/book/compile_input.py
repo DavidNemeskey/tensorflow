@@ -5,6 +5,7 @@
 
 from __future__ import absolute_import, division, print_function
 from argparse import ArgumentParser
+from itertools import chain
 import subprocess
 
 import numpy as np
@@ -96,6 +97,45 @@ class IntMemCompiler(CorpusCompiler):
         np.savez(self.output_prefix, data=arr)
 
 
+class BatchIntMemCompiler(IntMemCompiler):
+    """
+    A kind of a mix between the two above. It is still an IntMemCompiler, but
+    the sentences are sorted by length and there is a batch parameter. Useful
+    for validation / test sets.
+    """
+    def __init__(self, input_files, output_prefix, vocab_file, batch_size):
+        super(BatchIntMemCompiler, self).__init__(
+            input_files, output_prefix, vocab_file)
+        self.batch_size = batch_size
+
+    def __call__(self):
+        """Does the work."""
+        with openall(self.output_prefix, 'wt') as header:
+            print('BATCH_INT_MEM\t{}\t{}'.format(self.batch_size, self.input_size),
+                  file=header)
+
+        data = [[self.vocab[token] for token in tokens]
+                for tokens in self.read_input(self.input_files)]
+        data = sorted(data, key=lambda s: -len(s))
+
+        out_lists = [[] for _ in range(self.batch_size)]
+        lens = np.zeros((self.batch_size), dtype=int)
+        for s in data:
+            i = lens.argmin()
+            out_lists[i].append(s)
+            lens[i] += len(s)
+        print(lens)
+
+        # So that we don't keep the data 3 times in memory
+        del data
+        min_length = lens.min()
+        out_array = np.zeros((self.batch_size, min_length), dtype=np.int32)
+        for i in range(self.batch_size):
+            out_array[i] = np.fromiter(chain(*out_lists[i]), np.int32)[:min_length]
+
+        np.savez(self.output_prefix, data=out_array)
+
+
 def parse_arguments():
     parser = ArgumentParser(
         description='Prepares data for training.')
@@ -103,7 +143,8 @@ def parse_arguments():
                         help='the tokenized input text files.')
     parser.add_argument('--output-prefix', '-o', required=True,
                         help='the prefix of the output files\' names.')
-    parser.add_argument('--format', '-f', choices=['txt_disk', 'int_mem'],
+    parser.add_argument('--format', '-f',
+                        choices=['txt_disk', 'int_mem', 'batch_int_mem'],
                         help='the data format. The two choices are txt_disk, '
                              'where the data is on disk in tokenized text '
                              'format, and int_mem, where the data is in '
@@ -130,8 +171,11 @@ def main():
     args = parse_arguments()
     if args.format == 'txt_disk':
         c = TxtDiskCompiler(args.input_files, args.output_prefix, args.batch_size)
-    else:
+    elif args.format == 'int_mem':
         c = IntMemCompiler(args.input_files, args.output_prefix, args.vocab_file)
+    else:
+        c = BatchIntMemCompiler(args.input_files, args.output_prefix,
+                                args.vocab_file, args.batch_size)
     c()
 
 

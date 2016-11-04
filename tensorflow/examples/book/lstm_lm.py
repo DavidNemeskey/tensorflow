@@ -222,7 +222,7 @@ def main():
     test_data = data_loader(args.test_file, test_batch, test_steps,
                             vocab_file=args.vocab_file)
 
-    params = AttrDict(
+    train_params = AttrDict(
         rnn_cell=args.rnn_cell,
         hidden_size=args.num_nodes,
         num_layers=args.layers,
@@ -234,20 +234,23 @@ def main():
         embedding=args.embedding,
         data_type=tf.float32,
     )
-    eval_params = AttrDict(params)
-    eval_params.batch_size = test_batch
+    train_params.batch_size = train_data.batch_size
+    valid_params = AttrDict(train_params)
+    valid_params.batch_size = valid_data.batch_size
+    eval_params = AttrDict(train_params)
+    eval_params.batch_size = test_data.batch_size
     eval_params.num_steps = test_steps
 
     if not args.test_only:
         trainsm = get_loss_function(
-            args.trainsm, params.hidden_size, params.vocab_size, params.batch_size,
-            params.num_steps, params.data_type)
+            args.trainsm, train_params.hidden_size, train_params.vocab_size,
+            train_params.batch_size, train_params.num_steps, train_params.data_type)
         validsm = get_loss_function(
-            args.validsm, params.hidden_size, params.vocab_size, params.batch_size,
-            params.num_steps, params.data_type)
+            args.validsm, valid_params.hidden_size, valid_params.vocab_size,
+            valid_params.batch_size, valid_params.num_steps, valid_params.data_type)
     testsm = get_loss_function(
-        args.testsm, params.hidden_size, params.vocab_size,
-        test_batch, test_steps, params.data_type)
+        args.testsm, eval_params.hidden_size, eval_params.vocab_size,
+        eval_params.batch_size, eval_params.num_steps, eval_params.data_type)
 
     with tf.Graph().as_default() as graph:
         # init_scale = 1 / math.sqrt(args.num_nodes)
@@ -257,10 +260,10 @@ def main():
         if not args.test_only:
             with tf.name_scope('Train'):
                 with tf.variable_scope("Model", reuse=None, initializer=initializer):
-                    mtrain = LSTMModel(params, is_training=True, softmax=trainsm)
+                    mtrain = LSTMModel(train_params, is_training=True, softmax=trainsm)
             with tf.name_scope('Valid'):
                 with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                    mvalid = LSTMModel(params, is_training=False, softmax=validsm)
+                    mvalid = LSTMModel(valid_params, is_training=False, softmax=validsm)
         with tf.name_scope('Test'):
             with tf.variable_scope("Model", reuse=not args.test_only,
                                    initializer=initializer):

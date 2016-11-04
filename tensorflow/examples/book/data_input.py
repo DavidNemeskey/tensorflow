@@ -14,6 +14,11 @@ class DataLoader(object):
     def __init__(self, header, batch_size, num_steps,
                  data_len, data_batches, one_hot=False,
                  data_type=np.int32, vocab_file=None):
+        """
+        Usually batch_size is what was given in the c'tor, but for some
+        subclasses, the data itself can override this. The class member always
+        contains the actual values in effect.
+        """
         self.header = header
         self.batch_size = batch_size
         self.num_steps = num_steps
@@ -36,6 +41,9 @@ class DataLoader(object):
     def _init(self):
         """The subclass must initialize epoch_size and the data setup here."""
         raise NotImplementedError('_init must be implemented.')
+
+    def shape(self):
+        return self.batch_size, self.num_steps
 
 
 class TxtDiskLoader(DataLoader):
@@ -110,6 +118,22 @@ class IntMemLoader(DataLoader):
             yield self.data[:, start:end], self.data[:, start + 1:end + 1]
 
 
+class BatchIntMemLoader(DataLoader):
+    """Reads the int-array-in-memory format."""
+    def _init(self):
+        data = np.load(self.header + '.npz')['data']
+        self.batch_size = data.shape[0]
+        self.epoch_size = data.shape[1] // self.num_steps
+        self.data = data[:, :self.epoch_size * self.num_steps]
+
+    def __iter__(self):
+        num_steps = self.num_steps
+        for i in range(self.epoch_size):
+            start = i * num_steps
+            end = start + num_steps
+            yield self.data[:, start:end], self.data[:, start + 1:end + 1]
+
+
 def digits_format_str(number):
     """Creates the format string for 0-padded integer printing up to number."""
     return '.{{:0{}}}.gz'.format(int(math.ceil(math.log10(number))))
@@ -122,9 +146,12 @@ def data_loader(header, batch_size, num_steps, one_hot=False,
         if fields[0] == 'TXT_DISK':
             cls = TxtDiskLoader
             data_batches = int(fields[1])
-        else:
+        elif fields[1] == 'INT_MEM':
             cls = IntMemLoader
             data_batches = 0
+        else:
+            cls = BatchIntMemLoader
+            data_batches = int(fields[1])
         data_len = int(fields[-1])
     return cls(header, batch_size, num_steps, data_len, data_batches, one_hot,
                data_type, vocab_file)
