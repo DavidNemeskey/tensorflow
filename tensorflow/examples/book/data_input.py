@@ -123,8 +123,8 @@ class BatchIntMemLoader(DataLoader):
     def _init(self):
         data = np.load(self.header + '.npz')['data']
         self.batch_size = data.shape[0]
-        self.epoch_size = data.shape[1] // self.num_steps
-        self.data = data[:, :self.epoch_size * self.num_steps]
+        self.epoch_size = (data.shape[1] - 1) // self.num_steps
+        self.data = data[:, :self.epoch_size * self.num_steps + 1]
 
     def __iter__(self):
         num_steps = self.num_steps
