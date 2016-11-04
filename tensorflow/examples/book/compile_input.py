@@ -124,7 +124,6 @@ class BatchIntMemCompiler(IntMemCompiler):
             i = lens.argmin()
             out_lists[i].append(s)
             lens[i] += len(s)
-        print(lens)
 
         # So that we don't keep the data 3 times in memory
         del data
