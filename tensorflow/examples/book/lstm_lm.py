@@ -106,6 +106,59 @@ def parse_arguments():
     return args
 
 
+def run_epoch_train(session, model, data_index, epoch_size=0, verbose=0,
+                    global_step=0, writer=None):
+    """
+    Runs an epoch on the network.
+    - epoch_size: if 0, it is taken from data
+    - data_var: the variable with all the data
+    """
+    # TODO: these two should work together better, i.e. keep the previous
+    #       iteration state intact if epoch_size != 0; also loop around
+    start_time = time.time()
+    costs = 0.0
+    iters = 0
+    state = session.run(model.initial_state)
+
+    fetches = [model.cost, model.final_state, model.train_op]
+    fetches_summary = fetches + [model.summaries]
+    if verbose:
+        log_every = epoch_size // verbose
+
+    for step in range(epoch_size):
+        session.run([model.input_data, model.targets], {data_index: step})
+
+        # feed_dict = {model.sequence: batch}
+        # for i, (c, h) in enumerate(model.initial_state):
+        #     feed_dict[c] = state[i].c  # CEC for layer i
+        #     feed_dict[h] = state[i].h  # hidden for layer i
+        feed_dict = {
+            model.initial_state: state
+        }
+
+        if verbose and step % log_every == log_every - 1:
+            cost, state, _, summary = session.run(fetches_summary, feed_dict)
+            if writer:
+                writer.add_summary(summary, global_step=global_step)
+            if model.is_training:
+                global_step += 1
+        else:
+            cost, state, _ = session.run(fetches, feed_dict)
+        costs += cost
+        iters += model.params.num_steps
+        if verbose and step % log_every == log_every - 1:
+            print("%.3f perplexity: %.3f speed: %.0f wps" %
+                  (step * 1.0 / epoch_size, np.exp(costs / iters),
+                   iters * model.params.batch_size / (time.time() - start_time)))
+
+    # global_step is what the user sees, i.e. if the output is verbose, it is
+    # increased, otherwise it isn't
+    if not verbose and model.is_training:
+        global_step += 1
+
+    return np.exp(costs / iters), global_step
+
+
 def run_epoch(session, model, data, epoch_size=0, verbose=0,
               global_step=0, writer=None):
     """
@@ -254,17 +307,42 @@ def main():
         initializer = tf.random_uniform_initializer(
             -args.init_scale, args.init_scale)
 
+        with tf.name_scope('Input'):
+            input_data = tf.placeholder(dtype=tf.float32,
+                                        shape=(args.batch_size, args.num_steps))
+            targets = tf.placeholder(dtype=tf.float32,
+                                     shape=(args.batch_size, args.num_steps))
+            test_input_data = tf.placeholder(
+                dtype=tf.float32, shape=(TEST_BATCH, TEST_STEPS))
+            test_targets = tf.placeholder(
+                dtype=tf.float32, shape=(TEST_BATCH, TEST_STEPS))
         if not args.test_only:
+            with tf.name_scope('Input'):
+                with tf.device('/gpu:0'):
+                    train_data_init = tf.placeholder(dtype=train_data.data.dtype,
+                                                     shape=train_data.data.shape)
+                    train_var = tf.Variable(train_data_init,
+                                            trainable=False, collections=[])
+                    train_index = tf.placeholder(tf.int32, shape=())
+                    train_input_data = tf.slice(
+                        train_var, [0, args.num_steps * train_index],
+                        [args.batch_size, args.num_steps])
+                    train_targets = tf.slice(
+                        train_var, [0, 1 + args.num_steps * train_index],
+                        [args.batch_size, args.num_steps])
             with tf.name_scope('Train'):
                 with tf.variable_scope("Model", reuse=None, initializer=initializer):
-                    mtrain = LSTMModel(params, is_training=True, softmax=trainsm)
+                    mtrain = LSTMModel(params, True, trainsm,
+                                       train_input_data, train_targets)
             with tf.name_scope('Valid'):
                 with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                    mvalid = LSTMModel(params, is_training=False, softmax=validsm)
+                    mvalid = LSTMModel(params, False, validsm,
+                                       input_data, targets)
         with tf.name_scope('Test'):
             with tf.variable_scope("Model", reuse=not args.test_only,
                                    initializer=initializer):
-                mtest = LSTMModel(eval_params, is_training=False, softmax=testsm)
+                mtest = LSTMModel(eval_params, False, testsm,
+                                  test_input_data, test_targets)
         with tf.name_scope('Global_ops'):
             saver = tf.train.Saver(
                 name='saver', max_to_keep=max(10, args.early_stopping + 1))
@@ -279,6 +357,9 @@ def main():
         last_epoch = init_or_load_session(sess, save_dir, saver, init)
         global_step = 0
         if not args.test_only:
+            # Load the data into the GPU memory
+            sess.run(train_var.initializer,
+                     feed_dict={train_data_init: np.float32(train_data.data)})
             print('Epoch {:2d}-                 valid PPL {:6.3f}'.format(
                 last_epoch, run_epoch(sess, mvalid, valid_data, 0)[0]))
 
@@ -287,8 +368,8 @@ def main():
                 lr_decay = args.lr_decay ** max(epoch - args.decay_delay, 0.0)
                 mtrain.assign_lr(sess, args.learning_rate * lr_decay)
 
-                train_perplexity, global_step = run_epoch(
-                    sess, mtrain, train_data, 0, verbose=args.verbose,
+                train_perplexity, global_step = run_epoch_train(
+                    sess, mtrain, train_var, train_data.epoch_size, verbose=args.verbose,
                     global_step=global_step, writer=writer)
                 valid_perplexity, _ = run_epoch(sess, mvalid, valid_data)
                 print('Epoch {:2d} train PPL {:6.3f} valid PPL {:6.3f}'.format(

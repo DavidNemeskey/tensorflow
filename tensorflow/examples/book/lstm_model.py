@@ -5,11 +5,13 @@ import tensorflow as tf
 
 class LSTMModel(object):
     """Generic LSTM language model based on the PTB model in tf/models."""
-    def __init__(self, params, is_training, softmax, need_prediction=False):
+    def __init__(self, params, is_training, softmax, input_data, targets,
+                 need_prediction=False):
         self.is_training = is_training
         self.params = params
 
-        self._data()
+        self._input_data = tf.cast(input_data, tf.int32)
+        self._targets = tf.cast(targets, tf.int32)
         outputs = self._build_network()
         if need_prediction:
             self._cost, self.prediction = softmax(
@@ -33,17 +35,6 @@ class LSTMModel(object):
                                       self._lr, name='lr_summary'))
             self.summaries = tf.merge_summary(summaries)
 
-    def _data(self):
-        """
-        Creates the input placeholders. If using an embedding, the input is
-        a single number per token; if not, it must be one-hot encoded.
-        """
-        dims = [self.params.batch_size, self.params.num_steps]
-        self._input_data = tf.placeholder(
-            tf.int32, dims, name='input_placeholder')
-        self._targets = tf.placeholder(
-            tf.int32, dims, name='target_placeholder')
-
     def _build_network(self):
         # Slightly better results can be obtained with forget gate biases
         # initialized to 1 but the hyperparameters of the model would need to be
@@ -61,11 +52,12 @@ class LSTMModel(object):
 
         if self.params.embedding == 'yes':
             # If using an embedding, the input is a single number per token...
-            with tf.device("/cpu:0"):
-                embedding = tf.get_variable(
-                    'embedding', [self.params.vocab_size, self.params.hidden_size],
-                    dtype=self.params.data_type)
-                inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+            #with tf.device("/cpu:0"):
+            embedding = tf.get_variable(
+                'embedding', [self.params.vocab_size, self.params.hidden_size],
+                dtype=self.params.data_type)
+            eh = tf.cast(self._input_data, tf.int32)
+            inputs = tf.nn.embedding_lookup(embedding, eh)
         else:
             # ..., if not, it must be one-hot encoded.
             inputs = tf.one_hot(self._input_data, self.params.vocab_size,
