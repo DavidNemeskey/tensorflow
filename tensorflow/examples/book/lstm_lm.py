@@ -222,7 +222,7 @@ def main():
     test_data = data_loader(args.test_file, test_batch, test_steps,
                             vocab_file=args.vocab_file)
 
-    train_params = AttrDict(
+    params = AttrDict(
         rnn_cell=args.rnn_cell,
         hidden_size=args.num_nodes,
         num_layers=args.layers,
@@ -234,10 +234,12 @@ def main():
         embedding=args.embedding,
         data_type=tf.float32,
     )
-    train_params.batch_size = train_data.batch_size
-    valid_params = AttrDict(train_params)
-    valid_params.batch_size = valid_data.batch_size
-    eval_params = AttrDict(train_params)
+    if not args.test_only:
+        train_params = AttrDict(params)
+        train_params.batch_size = train_data.batch_size
+        valid_params = AttrDict(params)
+        valid_params.batch_size = valid_data.batch_size
+    eval_params = AttrDict(params)
     eval_params.batch_size = test_data.batch_size
     eval_params.num_steps = test_steps
 
