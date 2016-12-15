@@ -20,7 +20,7 @@ from lstm_model import LSTMModel
 from rnn import get_cell_types
 from softmax import get_loss_function
 
-TEST_BATCH, TEST_STEPS = 1, 1
+TEST_STEPS = 1
 
 
 def get_sconfig(gpu_memory):
@@ -211,7 +211,7 @@ def init_or_load_session(sess, save_dir, saver, init):
 def main():
     args = parse_arguments()
 
-    test_batch = TEST_BATCH if not args.test_only else args.batch_size
+    test_batch = args.batch_size  # Note that at test time, full softmax is run
     test_steps = TEST_STEPS
 
     if not args.test_only:
